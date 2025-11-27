@@ -8,10 +8,16 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "../algorithms/sensirion_gas_index_algorithm.h"
 
 static const char *TAG = "SGP41";
 
 static i2c_port_t s_i2c_num = I2C_NUM_0;
+
+// VOC和NOx算法实例
+static GasIndexAlgorithmParams s_voc_algorithm;
+static GasIndexAlgorithmParams s_nox_algorithm;
+static bool s_algorithm_initialized = false;
 
 /**
  * @brief 计算Sensirion CRC8
@@ -98,25 +104,18 @@ esp_err_t sgp41_init(const sgp41_config_t *config) {
 
     s_i2c_num = config->i2c_num;
 
-    // 配置I2C参数
-    i2c_config_t i2c_conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = config->sda_pin,
-        .scl_io_num = config->scl_pin,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = config->i2c_freq_hz,
-    };
+    // 注意: I2C总线已经由main.c初始化,不需要重复初始化
+    ESP_LOGI(TAG, "SGP41 initialized on I2C%d (using existing bus)", s_i2c_num);
 
-    ESP_ERROR_CHECK(i2c_param_config(s_i2c_num, &i2c_conf));
-    ESP_ERROR_CHECK(i2c_driver_install(s_i2c_num, I2C_MODE_MASTER, 0, 0, 0));
+    // 简化初始化:只等待传感器启动
+    vTaskDelay(pdMS_TO_TICKS(10));
 
-    ESP_LOGI(TAG, "SGP41 initialized on I2C%d (SDA:%d, SCL:%d)",
-             s_i2c_num, config->sda_pin, config->scl_pin);
+    // 初始化VOC和NOx算法
+    GasIndexAlgorithm_init(&s_voc_algorithm, 0);  // 0 = VOC
+    GasIndexAlgorithm_init(&s_nox_algorithm, 1);  // 1 = NOx
+    s_algorithm_initialized = true;
 
-    // 等待传感器启动
-    vTaskDelay(pdMS_TO_TICKS(50));
-
+    ESP_LOGI(TAG, "SGP41 basic initialization complete with VOC/NOx algorithms");
     return ESP_OK;
 }
 
@@ -170,14 +169,20 @@ esp_err_t sgp41_measure_raw(uint16_t rh_percent, uint16_t temp_celsius, sgp41_da
     data->sraw_voc = (response[0] << 8) | response[1];
     data->sraw_nox = (response[3] << 8) | response[4];
 
-    // VOC和NOx指数需要通过算法计算，这里简化处理
-    // 实际应用中应使用Sensirion的VOC和NOx算法库
-    data->voc_index = (data->sraw_voc * 500) / 65535;  // 简化映射到0-500
-    data->nox_index = (data->sraw_nox * 500) / 65535;  // 简化映射到0-500
+    // 使用Sensirion算法计算VOC和NOx指数
+    if (s_algorithm_initialized) {
+        GasIndexAlgorithm_process(&s_voc_algorithm, (int32_t)data->sraw_voc, &data->voc_index);
+        GasIndexAlgorithm_process(&s_nox_algorithm, (int32_t)data->sraw_nox, &data->nox_index);
+    } else {
+        // 如果算法未初始化，使用简化计算
+        data->voc_index = (data->sraw_voc * 500) / 65535;
+        data->nox_index = (data->sraw_nox * 500) / 65535;
+    }
 
     data->valid = true;
 
-    ESP_LOGD(TAG, "VOC raw: %d, NOx raw: %d", data->sraw_voc, data->sraw_nox);
+    ESP_LOGD(TAG, "VOC raw: %d (index: %ld), NOx raw: %d (index: %ld)",
+             data->sraw_voc, (long)data->voc_index, data->sraw_nox, (long)data->nox_index);
 
     return ESP_OK;
 }
@@ -255,7 +260,6 @@ esp_err_t sgp41_heater_off(void) {
 
 esp_err_t sgp41_deinit(void) {
     sgp41_heater_off();
-    i2c_driver_delete(s_i2c_num);
     ESP_LOGI(TAG, "SGP41 deinitialized");
     return ESP_OK;
 }

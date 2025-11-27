@@ -2,11 +2,16 @@ idf_component_register(
     SRCS
         "main.c"
         "sensors/senseair_s8.c"
+        "sensors/scd41.c"
         "sensors/sgp41.c"
+        "sensors/sht85.c"
         "sensors/dart_wzh3n.c"
+        "sensors/dps310_legacy.c"
+        "algorithms/sensirion_gas_index_algorithm.c"
     INCLUDE_DIRS
         "."
         "sensors"
+        "algorithms"
     PRIV_REQUIRES
         dps310
 )
