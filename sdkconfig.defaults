@@ -1,0 +1,4 @@
+# AirSense ESP32-C5 Configuration
+# Only override necessary settings
+
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096

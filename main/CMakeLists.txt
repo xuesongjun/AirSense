@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "sensors/senseair_s8.c"
+        "sensors/sgp41.c"
+        "sensors/dart_wzh3n.c"
+    INCLUDE_DIRS
+        "."
+        "sensors"
+    PRIV_REQUIRES
+        dps310
+)
