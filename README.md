@@ -5,10 +5,13 @@
 ## 项目概述
 
 AirSense是一个集成多种空气质量传感器的检测系统，可以实时监测以下参数：
-- **CO2浓度**: SenseAir S8传感器
-- **VOC和NOx**: Sensirion SGP41传感器
-- **NH3浓度**: Dart WZ-H3-N电化学传感器
-- **气压和温度**: Infineon DPS310传感器
+- **CO₂浓度 (NDIR)**: SenseAir S88LP（红外NDIR技术，UART Modbus接口）
+- **CO₂浓度 (光声)**: Sensirion SCD41（光声技术，内置温湿度测量）
+- **VOC 与 NOx 指数**: Sensirion SGP41（双 MOS 气体传感器，需配合 VOC/NOx 算法库）
+- **颗粒物（PM1/PM2.5/PM4/PM10）**: Sensirion SPS30（激光散射粒子传感器）
+- **甲醛 (HCHO)浓度**: Dart WZ-H3-N 电化学HCHO传感器，需要温度/湿度补偿
+- **气压和温度**: Infineon DPS310（高精度气压计）
+- **温湿度**: Sensirion SHT85 数字温湿度传感器（高精度工业级）
 
 ## 硬件配置
 
@@ -21,27 +24,29 @@ AirSense是一个集成多种空气质量传感器的检测系统，可以实时
 
 | 传感器 | 测量参数 | 接口 | I2C地址 | UART/端口 |
 |--------|----------|------|---------|----------|
-| SenseAir S8 | CO2 (0-2000 ppm) | UART | - | UART1 |
+| S88LP | CO2 (NDIR红外) | UART | - | UART1 |
+| SCD41 | CO2/温度/湿度 | I2C | 0x62 | I2C0 |
 | SGP41 | VOC/NOx指数 | I2C | 0x59 | I2C0 |
-| Dart WZ-H3-N | NH3 (0-100 ppm) | UART | - | UART2 |
-| DPS310 | 气压/温度 | I2C | 0x77 | I2C1 |
+| SPS30 | PM1/PM2.5/PM4/PM10 | I2C | 0x69 | I2C0 |
+| WZ-H3-N | HCHO (0-5 ppm) | UART | - | UART1* |
+| DPS310 | 气压/温度 | I2C | 0x77 | I2C0 |
+| SHT85 | 温度/湿度 | I2C | 0x44 | I2C0 |
+
+*注: S88LP和WZ-H3-N共用UART1，不能同时启用（ESP32-C5仅有UART1可用于外设）
 
 ### 引脚连接
 
 ```
 ESP32-C5 引脚分配:
-├── UART1 (SenseAir S8)
-│   ├── TX: GPIO17
-│   └── RX: GPIO18
-├── UART2 (Dart WZ-H3-N)
-│   ├── TX: GPIO21
-│   └── RX: GPIO22
-├── I2C0 (SGP41)
-│   ├── SDA: GPIO6
-│   └── SCL: GPIO7
-└── I2C1 (DPS310)
-    ├── SDA: GPIO4
-    └── SCL: GPIO5
+├── UART1 (S88LP CO2传感器 或 WZ-H3-N HCHO传感器，二选一)
+│   ├── TXD: GPIO5
+│   └── RXD: GPIO4
+└── I2C0 (所有I2C传感器通过扩展板共用)
+    ├── SDA: GPIO2
+    └── SCL: GPIO3
+    └── 连接传感器: SCD41, SGP41, SPS30, DPS310, SHT85
+
+注: UART0 (TXD0/RXD0) 用于固件烧录和日志输出，不可占用
 ```
 
 ## 软件架构
@@ -57,24 +62,38 @@ AirSense/
 │   ├── mcu/                    # MCU相关文档
 │   └── sensor/                 # 传感器数据手册
 ├── pcb/                        # PCB设计文件
-└── src/                        # 源代码
+└── main/                       # 主程序源代码
     ├── CMakeLists.txt          # 组件CMake配置
+    ├── idf_component.yml       # ESP-IDF组件依赖配置
     ├── main.c                  # 主程序
     └── sensors/                # 传感器驱动
-        ├── senseair_s8.h/c     # SenseAir S8驱动
-        ├── sgp41.h/c           # SGP41驱动
-        ├── dart_wzh3n.h/c      # Dart WZ-H3-N驱动
-        └── dps310.h/c          # DPS310驱动
+        ├── senseair_s8.h/c     # SenseAir S88LP/S8 CO2驱动 (Modbus)
+        ├── sgp41.h/c           # SGP41 VOC/NOx驱动
+        └── dart_wzh3n.h/c      # Dart WZ-H3-N HCHO驱动
+        # DPS310/SCD41/SPS30/SHT85使用esp-idf-lib库
 ```
 
 ### 传感器驱动特性
 
-#### SenseAir S8 (CO2传感器)
-- 通信协议: Modbus RTU
+#### SenseAir S88LP (CO2红外传感器)
+- 通信协议: UART (Modbus)
 - 波特率: 9600 bps
-- 测量范围: 0-2000 ppm (可扩展到10000 ppm)
-- 精度: ±40 ppm + 3% of reading
-- 响应时间: 20秒 (90%)
+- 测量技术: NDIR红外
+- CO2测量范围: 400-2000 ppm (标准) / 400-10000 ppm (扩展)
+- CO2精度: ±40 ppm + 3% of reading
+- 响应时间: < 2分钟 (90%)
+- 预热时间: < 2分钟
+- 寿命: > 15年
+
+#### SCD41 (CO2/温湿度传感器)
+- 通信协议: I2C
+- I2C地址: 0x62
+- CO2测量范围: 400-5000 ppm
+- CO2精度: ±(40 ppm + 5% of reading)
+- 温度范围: -10 to 60°C, 精度: ±0.8°C
+- 湿度范围: 0-100% RH, 精度: ±6% RH
+- 响应时间: 60秒
+- 采样间隔: 5秒
 
 #### SGP41 (VOC/NOx传感器)
 - 通信协议: I2C
@@ -82,20 +101,42 @@ AirSense/
 - 输出: 原始信号值 + 指数值(0-500)
 - 预热时间: 10秒
 - 特性: 湿度/温度补偿
+- 自适应算法: 24小时学习周期
 
-#### Dart WZ-H3-N (NH3电化学传感器)
+#### SPS30 (颗粒物传感器)
+- 通信协议: I2C
+- I2C地址: 0x69
+- 测量参数: PM1.0, PM2.5, PM4.0, PM10
+- 测量范围: 0-1000 μg/m³
+- 精度: ±10 μg/m³ (0-100 μg/m³)
+- 粒径范围: 0.3-10 μm
+- 采样间隔: 1秒
+
+#### Dart WZ-H3-N (HCHO电化学传感器)
 - 通信协议: UART
+- 波特率: 9600 bps
 - 工作模式: 主动上传/问答模式
-- 测量范围: 0-100 ppm
+- 测量范围: 0-5 ppm (甲醛)
 - 分辨率: 0.01 ppm
 - 响应时间: < 30秒
+- 特性: 需要温度/湿度补偿
 
-#### DPS310 (气压传感器)
+#### DPS310 (气压/温度传感器)
 - 通信协议: I2C/SPI
 - I2C地址: 0x77 (SDO=HIGH) / 0x76 (SDO=LOW)
 - 气压范围: 300-1200 hPa
 - 温度范围: -40 to 85°C
 - 精度: ±0.005 hPa (±0.05 m)
+- 采样速率: 可配置 1-128 次/秒
+
+#### SHT85 (温湿度传感器)
+- 通信协议: I2C
+- I2C地址: 0x44
+- 温度范围: -40 to 125°C
+- 温度精度: ±0.1°C (典型值)
+- 湿度范围: 0-100% RH
+- 湿度精度: ±1.5% RH (典型值)
+- 响应时间: 8秒 (τ63%)
 
 ## 编译和烧录
 
@@ -137,17 +178,26 @@ I (320) AirSense: AirSense Air Quality Monitor
 I (325) AirSense: MCU: ESP32-C5
 I (330) AirSense: Version: 1.0.0
 I (335) AirSense: Initializing sensors...
-I (340) SenseAir_S8: SenseAir S8 initialized on UART1 (TX:17, RX:18, Baud:9600)
-I (350) SGP41: SGP41 initialized on I2C0 (SDA:6, SCL:7)
-I (360) SGP41: Serial: 0000000012345678
-I (365) SGP41: Self-test passed
-I (370) Dart_WZH3N: Dart WZ-H3-N initialized on UART2 (TX:21, RX:22, Mode:Q&A)
-I (380) AirSense: Sensor initialization complete
-I (385) AirSense: System started successfully
-I (5390) AirSense: === Reading Sensors ===
-[S8] CO2: 412 ppm, Status: 0x00
+I (340) SCD41: SCD41 initialized on I2C0 (SDA:2, SCL:3)
+I (345) SCD41: Serial: 0x1234567890AB
+I (350) SGP41: SGP41 initialized on I2C0 (SDA:2, SCL:3)
+I (355) SGP41: Serial: 0x0000000012345678
+I (360) SGP41: Self-test passed
+I (365) SPS30: SPS30 initialized on I2C0 (SDA:2, SCL:3)
+I (370) SPS30: Serial: 12345678901234567890
+I (375) Dart_WZH3N: Dart WZ-H3-N initialized on UART1 (TXD:5, RXD:4, Baud:9600)
+I (380) DPS310: DPS310 initialized on I2C0 (SDA:2, SCL:3)
+I (385) DPS310: Product ID: 0x10, Revision ID: 0x01
+I (390) SHT85: SHT85 initialized on I2C0 (SDA:2, SCL:3)
+I (395) AirSense: Sensor initialization complete
+I (400) AirSense: System started successfully
+I (5405) AirSense: === Reading Sensors ===
+[SCD41] CO2: 412 ppm, Temp: 23.5°C, Humidity: 45.2% RH
 [SGP41] VOC raw: 23456, NOx raw: 12345, VOC index: 178, NOx index: 93
-[Dart] NH3: 0.12 ppm, Full Range: 100 ppm
+[SPS30] PM1.0: 5.2 μg/m³, PM2.5: 8.7 μg/m³, PM4.0: 10.3 μg/m³, PM10: 11.5 μg/m³
+[Dart] HCHO: 0.02 ppm
+[DPS310] Pressure: 1013.25 hPa, Temp: 23.4°C
+[SHT85] Temp: 23.6°C, Humidity: 45.0% RH
 
 ```
 
@@ -161,29 +211,23 @@ I (5390) AirSense: === Reading Sensors ===
 
 ### 引脚配置修改
 
-如需修改引脚配置，请编辑 [main.c](src/main.c) 文件中的引脚定义：
+如需修改引脚配置，请编辑 [main.c](main/main.c) 文件中的引脚定义：
 
 ```c
-// UART1 - SenseAir S8
-#define S8_TX_PIN               GPIO_NUM_17
-#define S8_RX_PIN               GPIO_NUM_18
+// UART1 - S88LP CO2传感器 或 WZ-H3-N HCHO传感器 (二选一)
+#define S88LP_TXD_PIN           GPIO_NUM_5
+#define S88LP_RXD_PIN           GPIO_NUM_4
+#define DART_TXD_PIN            GPIO_NUM_5
+#define DART_RXD_PIN            GPIO_NUM_4
 
-// UART2 - Dart WZ-H3-N
-#define DART_TX_PIN             GPIO_NUM_21
-#define DART_RX_PIN             GPIO_NUM_22
-
-// I2C0 - SGP41
-#define I2C0_SDA_PIN            GPIO_NUM_6
-#define I2C0_SCL_PIN            GPIO_NUM_7
-
-// I2C1 - DPS310
-#define I2C1_SDA_PIN            GPIO_NUM_4
-#define I2C1_SCL_PIN            GPIO_NUM_5
+// I2C0 - 所有I2C传感器 (SCD41, SGP41, SPS30, DPS310, SHT85)
+#define I2C0_SDA_PIN            GPIO_NUM_2
+#define I2C0_SCL_PIN            GPIO_NUM_3
 ```
 
 ### 测量间隔调整
 
-修改 [main.c](src/main.c) 中的 `MEASURE_INTERVAL_MS` 宏定义：
+修改 [main.c](main/main.c) 中的 `MEASURE_INTERVAL_MS` 宏定义：
 
 ```c
 #define MEASURE_INTERVAL_MS     5000  // 5秒
@@ -193,23 +237,29 @@ I (5390) AirSense: === Reading Sensors ===
 
 ### I2C总线配置
 
-本项目使用两个独立的I2C总线避免设备冲突：
-- **I2C0**: 连接SGP41传感器
-- **I2C1**: 连接DPS310传感器
+本项目所有I2C传感器通过I2C总线扩展板连接到同一个I2C总线：
+- **I2C0**: 连接所有I2C传感器 (SCD41, SGP41, SPS30, DPS310, SHT85)
+- **扩展板**: 使用I2C总线扩展板统一管理多个传感器
 
-这样可以避免I2C设备地址冲突和时钟频率不匹配的问题。
+所有传感器使用不同的I2C地址（0x62, 0x59, 0x69, 0x77, 0x44），不会产生地址冲突。
 
 ### 传感器预热时间
 
-- **SGP41**: 需要10秒预热，前30分钟数据可能不稳定
-- **SenseAir S8**: 需要几分钟稳定时间
-- **Dart WZ-H3-N**: 电化学传感器需要预热约1分钟
+- **SCD41**: 首次测量需要约60秒，建议预热5分钟后读数更稳定
+- **SGP41**: 需要10秒预热，前24小时数据可能不稳定（自适应学习阶段）
+- **SPS30**: 启动后约10秒开始输出稳定数据，建议预热30秒
+- **Dart WZ-H3-N**: 电化学传感器需要预热约1-2分钟
+- **DPS310**: 立即可用，无需预热
+- **SHT85**: 上电后立即可用，建议等待2秒
 
 ### 校准说明
 
-- **CO2传感器**: 支持ABC自动校准，需在新鲜空气中运行7天
-- **VOC传感器**: 自适应算法，24小时后达到最佳精度
-- **气压传感器**: 出厂已校准，无需用户校准
+- **SCD41 (CO2传感器)**: 支持FRC（强制校准）和ASC（自动自校准），ASC需在新鲜空气中定期运行
+- **SGP41 (VOC传感器)**: 自适应算法，24小时后达到最佳精度，无需手动校准
+- **SPS30 (颗粒物传感器)**: 出厂已校准，支持定期自动清洁功能延长寿命
+- **WZ-H3-N (HCHO传感器)**: 出厂已校准，建议根据温湿度进行软件补偿
+- **DPS310 (气压传感器)**: 出厂已校准，无需用户校准
+- **SHT85 (温湿度传感器)**: 出厂已校准，精度极高无需用户校准
 
 ## 后续开发计划
 
@@ -217,10 +267,10 @@ I (5390) AirSense: === Reading Sensors ===
 - [ ] 实现数据存储功能 (SD卡/Flash)
 - [ ] 添加WiFi连接和云端上传
 - [ ] 实现低功耗模式
-- [ ] 添加警报功能
+- [ ] 添加警报功能（CO2/VOC/PM2.5/甲醛超标报警）
 - [ ] 开发移动端APP
-- [ ] 增加数据可视化图表
-- [ ] 支持更多空气质量传感器 (PM2.5, 甲醛等)
+- [ ] 增加数据可视化图表和历史数据分析
+- [ ] 支持更多空气质量传感器 (臭氧、氡气等)
 
 ## 故障排查
 

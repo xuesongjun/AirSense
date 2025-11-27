@@ -4,10 +4,13 @@
  *
  * ESP32-C5验证机程序
  * 集成传感器:
- * - SenseAir S8: CO2传感器 (UART1)
- * - SGP41: VOC/NOx传感器 (I2C0)
- * - Dart WZ-H3-N: NH3电化学传感器 (UART2)
- * - DPS310: 气压/温度传感器 (I2C0或SPI)
+ * - SenseAir S88LP: CO2红外传感器 (UART1 Modbus)
+ * - Sensirion SCD41: CO2传感器 (I2C0)
+ * - Sensirion SGP41: VOC/NOx传感器 (I2C0)
+ * - Sensirion SPS30: PM颗粒物传感器 (I2C0)
+ * - Dart WZ-H3-N: HCHO甲醛电化学传感器 (UART1，与S88LP二选一)
+ * - Infineon DPS310: 气压/温度传感器 (I2C0)
+ * - Sensirion SHT85: 温湿度传感器 (I2C0)
  */
 
 #include <stdio.h>
@@ -24,34 +27,33 @@
 #include <dps310.h>  // esp-idf-lib的DPS310驱动
 
 // 传感器驱动头文件
-#include "sensors/senseair_s8.h"
+#include "sensors/senseair_s8.h"  // S88LP驱动 (兼容S8协议)
 #include "sensors/sgp41.h"
 #include "sensors/dart_wzh3n.h"
 
 static const char *TAG = "AirSense";
 
 // 传感器使能开关 (ESP32-C5验证 - 仅使用DPS310)
-#define ENABLE_SENSEAIR_S8      0  // 初始验证禁用
-#define ENABLE_SGP41            0  // 初始验证禁用
-#define ENABLE_DART_WZH3N       0  // 需要UART2，ESP32-C5不支持
-#define ENABLE_DPS310           1  // 初始验证使用
+#define ENABLE_S88LP            0  // S88LP CO2传感器 (UART1)
+#define ENABLE_SGP41            0  // SGP41 VOC/NOx传感器 (I2C0)
+#define ENABLE_DART_WZH3N       0  // WZ-H3-N HCHO传感器 (UART1，与S88LP二选一)
+#define ENABLE_DPS310           1  // DPS310气压传感器 (I2C0) - 验证中
 
-// 引脚定义 (根据实际硬件调整)
-// UART1 - SenseAir S8
-#define S8_TX_PIN               GPIO_NUM_17
-#define S8_RX_PIN               GPIO_NUM_18
+// 引脚定义 (ESP32-C5-DevKitC-1)
+// UART1 - S88LP CO2传感器 或 WZ-H3-N HCHO传感器 (二选一)
+#define S88LP_TXD_PIN           GPIO_NUM_5
+#define S88LP_RXD_PIN           GPIO_NUM_4
 
-// UART2 - Dart WZ-H3-N
-#define DART_TX_PIN             GPIO_NUM_21
-#define DART_RX_PIN             GPIO_NUM_22
+// UART1 - Dart WZ-H3-N (与S88LP共用UART1，不能同时启用)
+#define DART_TXD_PIN            GPIO_NUM_5
+#define DART_RXD_PIN            GPIO_NUM_4
 
 // I2C0 - SGP41和DPS310共用 (ESP32-C5开发板)
 #define I2C0_SDA_PIN            GPIO_NUM_2
 #define I2C0_SCL_PIN            GPIO_NUM_3
 
-// I2C1 - DPS310 (使用独立I2C)
-#define I2C1_SDA_PIN            GPIO_NUM_4
-#define I2C1_SCL_PIN            GPIO_NUM_5
+// 注: 所有I2C传感器通过扩展板共用I2C0
+// 注: UART0用于固件烧录和日志输出，不可占用
 
 // 测量间隔 (ms) - 128次过采样测量时间~344ms
 #define MEASURE_INTERVAL_MS     3000  // 3秒间隔,给128次过采样足够余量
@@ -105,20 +107,20 @@ static void init_all_sensors(void) {
     ESP_LOGI(TAG, "Initializing sensors...");
     esp_err_t ret = ESP_OK;
 
-#if ENABLE_SENSEAIR_S8
-    // 初始化SenseAir S8 (UART1)
-    senseair_s8_config_t s8_config = {
+#if ENABLE_S88LP
+    // 初始化SenseAir S88LP CO2传感器 (UART1 Modbus)
+    senseair_s8_config_t s88lp_config = {
         .uart_num = UART_NUM_1,
-        .tx_pin = S8_TX_PIN,
-        .rx_pin = S8_RX_PIN,
+        .tx_pin = S88LP_TXD_PIN,
+        .rx_pin = S88LP_RXD_PIN,
         .baud_rate = 9600,
         .modbus_addr = SENSEAIR_S8_DEFAULT_ADDR,
     };
-    ret = senseair_s8_init(&s8_config);
+    ret = senseair_s8_init(&s88lp_config);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "SenseAir S8 initialized");
+        ESP_LOGI(TAG, "SenseAir S88LP CO2 sensor initialized");
     } else {
-        ESP_LOGE(TAG, "Failed to initialize SenseAir S8: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to initialize S88LP: %s", esp_err_to_name(ret));
     }
 #endif
 
@@ -154,8 +156,8 @@ static void init_all_sensors(void) {
     // 初始化Dart WZ-H3-N (UART1) - ESP32-C5不支持UART2
     dart_wzh3n_config_t dart_config = {
         .uart_num = UART_NUM_1,
-        .tx_pin = DART_TX_PIN,
-        .rx_pin = DART_RX_PIN,
+        .tx_pin = DART_TXD_PIN,
+        .rx_pin = DART_RXD_PIN,
         .baud_rate = 9600,
         .active_upload = false,
     };
@@ -240,13 +242,13 @@ static void sensor_task(void *pvParameters) {
     while (1) {
         ESP_LOGI(TAG, "=== Reading Sensors ===");
 
-#if ENABLE_SENSEAIR_S8
-        // 读取SenseAir S8 - CO2
-        senseair_s8_data_t s8_data;
-        if (senseair_s8_read_co2(&s8_data) == ESP_OK && s8_data.valid) {
-            printf("[S8] CO2: %d ppm, Status: 0x%02X\n", s8_data.co2_ppm, s8_data.status);
+#if ENABLE_S88LP
+        // 读取SenseAir S88LP - CO2
+        senseair_s8_data_t s88lp_data;
+        if (senseair_s8_read_co2(&s88lp_data) == ESP_OK && s88lp_data.valid) {
+            printf("[S88LP] CO2: %d ppm, Status: 0x%02X\n", s88lp_data.co2_ppm, s88lp_data.status);
         } else {
-            printf("[S8] Failed to read CO2\n");
+            printf("[S88LP] Failed to read CO2\n");
         }
         vTaskDelay(pdMS_TO_TICKS(100));
 #endif
