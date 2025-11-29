@@ -58,7 +58,17 @@ typedef struct {
 esp_err_t sgp41_init(const sgp41_config_t *config);
 
 /**
- * @brief 读取VOC和NOx原始数据
+ * @brief 读取VOC和NOx原始数据 (浮点温湿度补偿)
+ *
+ * @param rh_percent 相对湿度 (%)，用于补偿
+ * @param temp_celsius 温度 (°C)，用于补偿
+ * @param data 输出数据结构体指针
+ * @return esp_err_t ESP_OK成功，其他失败
+ */
+esp_err_t sgp41_measure_raw_f(float rh_percent, float temp_celsius, sgp41_data_t *data);
+
+/**
+ * @brief 读取VOC和NOx原始数据 (整数温湿度补偿，兼容旧接口)
  *
  * @param rh_percent 相对湿度 (%)，用于补偿
  * @param temp_celsius 温度 (°C)，用于补偿

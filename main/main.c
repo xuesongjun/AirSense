@@ -23,17 +23,17 @@
 #include "nvs_flash.h"
 
 // 传感器驱动头文件
-#include "sensors/senseair_s8.h"  // S88LP驱动 (兼容S8协议)
-#include "sensors/scd41.h"        // SCD41 CO2传感器
-#include "sensors/sgp41.h"        // SGP41 VOC/NOx传感器
-#include "sensors/sht85.h"        // SHT85温湿度传感器
-#include "sensors/dart_wzh3n.h"   // WZ-H3-N HCHO传感器
-#include "sensors/dps310_legacy.h" // DPS310气压传感器 (旧版I2C API)
+#include "sensors/senseair_s88lp.h" // S88LP CO2传感器 (UART Modbus)
+#include "sensors/scd41.h"          // SCD41 CO2传感器
+#include "sensors/sgp41.h"          // SGP41 VOC/NOx传感器
+#include "sensors/sht85.h"          // SHT85温湿度传感器
+#include "sensors/dart_wzh3n.h"     // WZ-H3-N HCHO传感器
+#include "sensors/dps310_legacy.h"  // DPS310气压传感器 (旧版I2C API)
 
 static const char *TAG = "AirSense";
 
 // 传感器使能开关
-#define ENABLE_S88LP            0  // S88LP CO2传感器 (UART1)
+#define ENABLE_S88LP            1  // S88LP CO2传感器 (UART1) - 已启用
 #define ENABLE_SCD41            1  // SCD41 CO2传感器 (I2C0)
 #define ENABLE_SGP41            1  // SGP41 VOC/NOx传感器 (I2C0)
 #define ENABLE_SHT85            1  // SHT85温湿度传感器 (I2C0)
@@ -327,12 +327,10 @@ static void sensor_task(void *pvParameters) {
 #endif
 
 #if ENABLE_SGP41
-        // 读取SGP41 - VOC/NOx (使用SHT85的温湿度补偿)
+        // 读取SGP41 - VOC/NOx (使用SHT85的温湿度补偿，浮点精度)
         sgp41_data_t sgp41_data;
-        uint16_t rh_percent = (uint16_t)ambient_rh;
-        uint16_t temp_celsius = (uint16_t)ambient_temp;
 
-        if (sgp41_measure_raw(rh_percent, temp_celsius, &sgp41_data) == ESP_OK && sgp41_data.valid) {
+        if (sgp41_measure_raw_f(ambient_rh, ambient_temp, &sgp41_data) == ESP_OK && sgp41_data.valid) {
             printf("[SGP41] VOC raw: %d, NOx raw: %d, VOC index: %ld, NOx index: %ld\n",
                    sgp41_data.sraw_voc, sgp41_data.sraw_nox,
                    (long)sgp41_data.voc_index, (long)sgp41_data.nox_index);

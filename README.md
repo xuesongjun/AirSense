@@ -1,6 +1,7 @@
 # AirSense 空气质量检测仪
 
-基于ESP32-C5的多传感器空气质量检测验证机
+基于esp32-c5-devkitc-1的多传感器空气质量检测验证机
+参考连接:https://docs.espressif.com/projects/esp-dev-kits/zh_CN/latest/esp32c5/esp32-c5-devkitc-1/user_guide.html
 
 ## 项目概述
 
@@ -67,7 +68,7 @@ AirSense/
     ├── idf_component.yml       # ESP-IDF组件依赖配置
     ├── main.c                  # 主程序
     └── sensors/                # 传感器驱动
-        ├── senseair_s8.h/c     # SenseAir S88LP/S8 CO2驱动 (Modbus)
+        ├── senseair_s88lp.h/c  # SenseAir S88LP CO2驱动 (Modbus)
         ├── sgp41.h/c           # SGP41 VOC/NOx驱动
         └── dart_wzh3n.h/c      # Dart WZ-H3-N HCHO驱动
         # DPS310/SCD41/SPS30/SHT85使用esp-idf-lib库

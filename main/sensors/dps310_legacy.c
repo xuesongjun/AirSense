@@ -234,11 +234,29 @@ esp_err_t dps310_legacy_read_data(dps310_data_t *data) {
 
     data->valid = false;
 
+    // 检查数据就绪状态 (MEAS_CFG寄存器: bit6=PRS_RDY, bit5=TMP_RDY)
+    uint8_t meas_cfg;
+    esp_err_t ret = dps310_read_reg(DPS310_REG_MEAS_CFG, &meas_cfg, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read MEAS_CFG register");
+        return ret;
+    }
+
+    // 检查气压和温度数据是否都就绪
+    bool prs_ready = (meas_cfg & 0x10) != 0;  // bit4: PRS_RDY
+    bool tmp_ready = (meas_cfg & 0x20) != 0;  // bit5: TMP_RDY
+
+    if (!prs_ready || !tmp_ready) {
+        ESP_LOGD(TAG, "Data not ready (MEAS_CFG=0x%02X, PRS=%d, TMP=%d)",
+                 meas_cfg, prs_ready, tmp_ready);
+        return ESP_ERR_NOT_FINISHED;
+    }
+
     // 读取原始数据
     uint8_t prs_data[3];
     uint8_t tmp_data[3];
 
-    esp_err_t ret = dps310_read_reg(DPS310_REG_PSR_B2, prs_data, 3);
+    ret = dps310_read_reg(DPS310_REG_PSR_B2, prs_data, 3);
     if (ret != ESP_OK) {
         return ret;
     }

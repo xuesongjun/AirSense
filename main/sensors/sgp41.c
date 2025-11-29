@@ -119,7 +119,7 @@ esp_err_t sgp41_init(const sgp41_config_t *config) {
     return ESP_OK;
 }
 
-esp_err_t sgp41_measure_raw(uint16_t rh_percent, uint16_t temp_celsius, sgp41_data_t *data) {
+esp_err_t sgp41_measure_raw_f(float rh_percent, float temp_celsius, sgp41_data_t *data) {
     if (data == NULL) {
         ESP_LOGE(TAG, "Data pointer is NULL");
         return ESP_ERR_INVALID_ARG;
@@ -127,11 +127,11 @@ esp_err_t sgp41_measure_raw(uint16_t rh_percent, uint16_t temp_celsius, sgp41_da
 
     data->valid = false;
 
-    // 转换温湿度为SGP41格式
+    // 转换温湿度为SGP41格式 (使用浮点计算保持精度)
     // RH: ticks = %RH * 65535 / 100
     // Temp: ticks = (°C + 45) * 65535 / 175
-    uint16_t rh_ticks = (rh_percent * 65535) / 100;
-    uint16_t temp_ticks = ((temp_celsius + 45) * 65535) / 175;
+    uint16_t rh_ticks = (uint16_t)(rh_percent * 65535.0f / 100.0f);
+    uint16_t temp_ticks = (uint16_t)((temp_celsius + 45.0f) * 65535.0f / 175.0f);
 
     // 准备参数 (湿度和温度)
     uint8_t params[4];
@@ -185,6 +185,11 @@ esp_err_t sgp41_measure_raw(uint16_t rh_percent, uint16_t temp_celsius, sgp41_da
              data->sraw_voc, (long)data->voc_index, data->sraw_nox, (long)data->nox_index);
 
     return ESP_OK;
+}
+
+esp_err_t sgp41_measure_raw(uint16_t rh_percent, uint16_t temp_celsius, sgp41_data_t *data) {
+    // 兼容旧接口，转换为浮点调用
+    return sgp41_measure_raw_f((float)rh_percent, (float)temp_celsius, data);
 }
 
 esp_err_t sgp41_self_test(void) {
