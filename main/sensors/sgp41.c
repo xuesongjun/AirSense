@@ -107,15 +107,38 @@ esp_err_t sgp41_init(const sgp41_config_t *config) {
     // 注意: I2C总线已经由main.c初始化,不需要重复初始化
     ESP_LOGI(TAG, "SGP41 initialized on I2C%d (using existing bus)", s_i2c_num);
 
-    // 简化初始化:只等待传感器启动
+    // 等待传感器启动
     vTaskDelay(pdMS_TO_TICKS(10));
+
+    // 执行 conditioning 步骤 (Sensirion 官方要求)
+    // 使用默认温湿度参数 (25°C, 50% RH)
+    ESP_LOGI(TAG, "Starting SGP41 conditioning (10 seconds)...");
+
+    uint16_t default_rh_ticks = (50 * 65535) / 100;        // 50% RH
+    uint16_t default_temp_ticks = ((25 + 45) * 65535) / 175; // 25°C
+
+    uint8_t params[4];
+    params[0] = (default_rh_ticks >> 8) & 0xFF;
+    params[1] = default_rh_ticks & 0xFF;
+    params[2] = (default_temp_ticks >> 8) & 0xFF;
+    params[3] = default_temp_ticks & 0xFF;
+
+    esp_err_t ret = sgp41_write_command(SGP41_CMD_CONDITIONING, params, 4);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Conditioning command failed: %s", esp_err_to_name(ret));
+        // 继续初始化，不中断
+    } else {
+        // 等待 conditioning 完成 (10 秒)
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        ESP_LOGI(TAG, "SGP41 conditioning complete");
+    }
 
     // 初始化VOC和NOx算法
     GasIndexAlgorithm_init(&s_voc_algorithm, 0);  // 0 = VOC
     GasIndexAlgorithm_init(&s_nox_algorithm, 1);  // 1 = NOx
     s_algorithm_initialized = true;
 
-    ESP_LOGI(TAG, "SGP41 basic initialization complete with VOC/NOx algorithms");
+    ESP_LOGI(TAG, "SGP41 initialization complete with VOC/NOx algorithms");
     return ESP_OK;
 }
 
@@ -267,4 +290,46 @@ esp_err_t sgp41_deinit(void) {
     sgp41_heater_off();
     ESP_LOGI(TAG, "SGP41 deinitialized");
     return ESP_OK;
+}
+
+esp_err_t sgp41_set_voc_baseline(float baseline) {
+    if (!s_algorithm_initialized) {
+        ESP_LOGE(TAG, "Algorithm not initialized");
+        return ESP_FAIL;
+    }
+    if (baseline < 10000.0f || baseline > 60000.0f) {
+        ESP_LOGE(TAG, "Invalid VOC baseline: %.0f (valid range: 10000-60000)", baseline);
+        return ESP_ERR_INVALID_ARG;
+    }
+    GasIndexAlgorithm_set_baseline(&s_voc_algorithm, baseline);
+    ESP_LOGI(TAG, "VOC baseline set to: %.0f", baseline);
+    return ESP_OK;
+}
+
+esp_err_t sgp41_set_nox_baseline(float baseline) {
+    if (!s_algorithm_initialized) {
+        ESP_LOGE(TAG, "Algorithm not initialized");
+        return ESP_FAIL;
+    }
+    if (baseline < 5000.0f || baseline > 40000.0f) {
+        ESP_LOGE(TAG, "Invalid NOx baseline: %.0f (valid range: 5000-40000)", baseline);
+        return ESP_ERR_INVALID_ARG;
+    }
+    GasIndexAlgorithm_set_baseline(&s_nox_algorithm, baseline);
+    ESP_LOGI(TAG, "NOx baseline set to: %.0f", baseline);
+    return ESP_OK;
+}
+
+float sgp41_get_voc_baseline(void) {
+    if (!s_algorithm_initialized) {
+        return 0.0f;
+    }
+    return GasIndexAlgorithm_get_baseline(&s_voc_algorithm);
+}
+
+float sgp41_get_nox_baseline(void) {
+    if (!s_algorithm_initialized) {
+        return 0.0f;
+    }
+    return GasIndexAlgorithm_get_baseline(&s_nox_algorithm);
 }

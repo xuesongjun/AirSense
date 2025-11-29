@@ -24,6 +24,7 @@ static void _init_instances(GasIndexAlgorithmParams* params) {
     params->mUptime = F16(0.0f);
     params->mSraw = F16(0.0f);
     params->mGas_Index = F16(0.0f);
+    params->mCustom_Baseline = F16(0.0f);  // 0 表示使用默认值
 }
 
 static void _reset_algorithm(GasIndexAlgorithmParams* params) {
@@ -91,16 +92,19 @@ void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw, in
 
     if (params->mIndex == ALGORITHM_TYPE_VOC) {
         // VOC 映射
-        baseline = 27000.0f;      // 典型干净室内空气
-        good_max = 32000.0f;      // 轻度污染
-        moderate_max = 37000.0f;  // 中度污染
-        poor_max = 42000.0f;      // 重度污染
+        // baseline 基于 Sensirion 典型值 (25000-30000)，取中值 27000
+        // 用户可通过 set_voc_baseline 命令自定义基线
+        baseline = (params->mCustom_Baseline > 0.0f) ? params->mCustom_Baseline : 27000.0f;
+        good_max = baseline + 5000.0f;      // 基线 + 5000 (轻度污染)
+        moderate_max = baseline + 10000.0f; // 基线 + 10000 (中度污染)
+        poor_max = baseline + 15000.0f;     // 基线 + 15000 (重度污染)
     } else {
         // NOx 映射
-        baseline = 15000.0f;      // 典型干净室内空气
-        good_max = 18000.0f;      // 轻度污染
-        moderate_max = 22000.0f;  // 中度污染
-        poor_max = 27000.0f;      // 重度污染
+        // 用户可通过 set_nox_baseline 命令自定义基线
+        baseline = (params->mCustom_Baseline > 0.0f) ? params->mCustom_Baseline : 15000.0f;
+        good_max = baseline + 3000.0f;      // 基线 + 3000 (轻度污染)
+        moderate_max = baseline + 7000.0f;  // 基线 + 7000 (中度污染)
+        poor_max = baseline + 12000.0f;     // 基线 + 12000 (重度污染)
     }
 
     // 分段线性映射到 1-500
@@ -133,4 +137,20 @@ void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw, in
 
     params->mGas_Index = index_value;
     *gas_index = (int32_t)(index_value + 0.5f);
+}
+
+void GasIndexAlgorithm_set_baseline(GasIndexAlgorithmParams* params, float baseline) {
+    params->mCustom_Baseline = baseline;
+}
+
+float GasIndexAlgorithm_get_baseline(GasIndexAlgorithmParams* params) {
+    if (params->mCustom_Baseline > 0.0f) {
+        return params->mCustom_Baseline;
+    }
+    // 返回默认值
+    if (params->mIndex == ALGORITHM_TYPE_VOC) {
+        return 27000.0f;
+    } else {
+        return 15000.0f;
+    }
 }

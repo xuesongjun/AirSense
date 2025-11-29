@@ -24,6 +24,7 @@ extern "C" {
 
 // 命令定义
 #define SGP41_CMD_MEASURE_RAW       0x2619  // 测量原始信号
+#define SGP41_CMD_CONDITIONING      0x2612  // 调理加热器 (10秒)
 #define SGP41_CMD_EXECUTE_SELF_TEST 0x280E  // 自检
 #define SGP41_CMD_HEATER_OFF        0x3615  // 关闭加热器
 #define SGP41_CMD_GET_SERIAL        0x3682  // 获取序列号
@@ -105,6 +106,36 @@ esp_err_t sgp41_heater_off(void);
  * @return esp_err_t ESP_OK成功，其他失败
  */
 esp_err_t sgp41_deinit(void);
+
+/**
+ * @brief 设置VOC基线值
+ *
+ * @param baseline VOC原始值基线 (典型值: 27000)
+ * @return esp_err_t ESP_OK成功，其他失败
+ */
+esp_err_t sgp41_set_voc_baseline(float baseline);
+
+/**
+ * @brief 设置NOx基线值
+ *
+ * @param baseline NOx原始值基线 (典型值: 15000)
+ * @return esp_err_t ESP_OK成功，其他失败
+ */
+esp_err_t sgp41_set_nox_baseline(float baseline);
+
+/**
+ * @brief 获取当前VOC基线值
+ *
+ * @return float 当前VOC基线值
+ */
+float sgp41_get_voc_baseline(void);
+
+/**
+ * @brief 获取当前NOx基线值
+ *
+ * @return float 当前NOx基线值
+ */
+float sgp41_get_nox_baseline(void);
 
 #ifdef __cplusplus
 }

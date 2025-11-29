@@ -23,8 +23,9 @@ static int32_t s_c00, s_c10, s_c01, s_c11, s_c20, s_c21, s_c30;
 static float s_kp = 0;  // 气压缩放因子
 static float s_kt = 0;  // 温度缩放因子
 
-// 海拔参考气压
+// 海拔参考气压和海拔值
 static float s_ref_pressure = 101325.0f;  // 标准大气压 (Pa)
+static float s_ref_altitude = 0.0f;       // 参考海拔 (m)
 
 /**
  * @brief 写寄存器
@@ -294,10 +295,22 @@ esp_err_t dps310_legacy_read_data(dps310_data_t *data) {
 }
 
 esp_err_t dps310_legacy_set_altitude_ref(float altitude_m) {
-    // 根据当前海拔计算参考气压
-    s_ref_pressure = 101325.0f * powf(1.0f - altitude_m / 44330.0f, 5.255f);
-    ESP_LOGI(TAG, "Altitude reference set to %.2f m (ref pressure: %.2f Pa)",
-             altitude_m, s_ref_pressure);
+    // 读取当前气压作为参考气压
+    dps310_data_t current_data;
+    esp_err_t ret = dps310_legacy_read_data(&current_data);
+    if (ret != ESP_OK || !current_data.valid) {
+        ESP_LOGE(TAG, "Failed to read current pressure for altitude calibration");
+        return ESP_FAIL;
+    }
+
+    // 将当前实际气压设置为参考气压
+    s_ref_pressure = current_data.pressure;
+
+    // 存储用户设置的海拔值（用于显示）
+    s_ref_altitude = altitude_m;
+
+    ESP_LOGI(TAG, "Altitude reference set to %.2f m (current pressure: %.2f Pa / %.2f hPa)",
+             altitude_m, s_ref_pressure, s_ref_pressure / 100.0f);
     return ESP_OK;
 }
 

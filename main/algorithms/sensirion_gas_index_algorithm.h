@@ -47,11 +47,26 @@ typedef struct {
     float mUptime;
     float mSraw;
     float mGas_Index;
+    float mCustom_Baseline;  // 用户自定义基线值 (0表示使用默认值)
 } GasIndexAlgorithmParams;
 
 void GasIndexAlgorithm_init(GasIndexAlgorithmParams* params, int32_t algorithm_type);
 void GasIndexAlgorithm_reset(GasIndexAlgorithmParams* params);
 void GasIndexAlgorithm_process(GasIndexAlgorithmParams* params, int32_t sraw, int32_t* gas_index);
+
+/**
+ * @brief 设置VOC或NOx算法的基线值
+ * @param params 算法参数结构体
+ * @param baseline 基线值 (raw值，用于Index=100的边界)
+ */
+void GasIndexAlgorithm_set_baseline(GasIndexAlgorithmParams* params, float baseline);
+
+/**
+ * @brief 获取当前基线值
+ * @param params 算法参数结构体
+ * @return 当前基线值
+ */
+float GasIndexAlgorithm_get_baseline(GasIndexAlgorithmParams* params);
 
 #ifdef __cplusplus
 }

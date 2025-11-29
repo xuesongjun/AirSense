@@ -269,6 +269,82 @@ static void init_all_sensors(void) {
 #endif
 
     ESP_LOGI(TAG, "Sensor initialization complete");
+
+#if ENABLE_SCD41 && ENABLE_SHT85
+    // SCD41自动温度偏移补偿
+    // 等待传感器稳定并获取第一次测量值
+    ESP_LOGI(TAG, "Starting SCD41 automatic temperature offset calibration...");
+    vTaskDelay(pdMS_TO_TICKS(6000));  // 等待6秒,确保SCD41和SHT85都有数据
+
+    sht85_data_t sht_cal;
+    scd41_data_t scd_cal;
+    bool calibration_success = false;
+
+    // 尝试读取3次,确保获取有效数据
+    for (int i = 0; i < 3; i++) {
+        esp_err_t sht_ret = sht85_read_measurement(SHT85_REPEATABILITY_HIGH, &sht_cal);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        esp_err_t scd_ret = scd41_read_measurement(&scd_cal);
+
+        if (sht_ret == ESP_OK && sht_cal.valid && scd_ret == ESP_OK && scd_cal.valid) {
+            // 计算温度偏移 (SCD41内部温度 - 真实环境温度)
+            float temp_offset = scd_cal.temperature - sht_cal.temperature;
+
+            ESP_LOGI(TAG, "Temperature offset detected: %.2f°C (SCD41=%.2f°C, SHT85=%.2f°C)",
+                     temp_offset, scd_cal.temperature, sht_cal.temperature);
+
+            // 根据温度偏移判断是否需要补偿
+            // 正常自热: temp_offset > 0 (SCD41温度更高)
+            // 异常情况: temp_offset < 0 (SCD41温度更低,可能是气流差异)
+            if (temp_offset >= 0.5f && temp_offset <= 5.0f) {
+                // 典型自热效应: SCD41比环境温度高0.5~5°C
+                ESP_LOGI(TAG, "Normal self-heating detected, applying temperature offset compensation");
+                ret = scd41_set_temperature_offset(temp_offset);
+                if (ret == ESP_OK) {
+                    ESP_LOGI(TAG, "SCD41 temperature offset set to %.2f°C", temp_offset);
+
+                    // 设置海拔补偿 (南京浦口区海拔约5m)
+                    ret = scd41_set_sensor_altitude(5);
+                    if (ret == ESP_OK) {
+                        ESP_LOGI(TAG, "SCD41 sensor altitude set to 5m");
+                    }
+
+                    // 重新启动测量
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    ret = scd41_start_periodic_measurement();
+                    if (ret == ESP_OK) {
+                        ESP_LOGI(TAG, "SCD41 periodic measurement restarted with calibration");
+                        calibration_success = true;
+                    }
+                }
+            } else if (temp_offset < -0.5f && temp_offset >= -5.0f) {
+                // 反向偏移: SCD41比环境温度低(可能是传感器位置或气流差异)
+                ESP_LOGW(TAG, "Reverse temperature offset detected (SCD41 cooler than SHT85)");
+                ESP_LOGW(TAG, "This may indicate: 1) Different sensor locations, 2) Better airflow at SCD41");
+                ESP_LOGW(TAG, "Skipping temperature offset compensation - review sensor placement");
+
+                // 仅设置海拔补偿,不设置温度偏移
+                ret = scd41_set_sensor_altitude(5);
+                if (ret == ESP_OK) {
+                    ESP_LOGI(TAG, "SCD41 sensor altitude set to 5m (no temp offset)");
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    scd41_start_periodic_measurement();
+                }
+            } else {
+                ESP_LOGW(TAG, "Temperature offset %.2f°C out of valid range, skipping calibration", temp_offset);
+                ESP_LOGW(TAG, "Expected range: -5.0°C to +5.0°C, |offset| >= 0.5°C");
+            }
+            break;
+        }
+
+        ESP_LOGW(TAG, "Calibration attempt %d/3 failed, retrying...", i + 1);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+
+    if (!calibration_success) {
+        ESP_LOGW(TAG, "SCD41 automatic temperature calibration failed, using default settings");
+    }
+#endif
 }
 
 /**
@@ -434,10 +510,94 @@ static void console_task(void *pvParameters) {
 #else
                     ESP_LOGW(TAG, "DPS310 is not enabled");
 #endif
+                } else if (strncmp(line, "set_voc_baseline ", 17) == 0) {
+                    printf("\n");
+                    float baseline = atof(line + 17);
+#if ENABLE_SGP41
+                    esp_err_t ret = sgp41_set_voc_baseline(baseline);
+                    if (ret == ESP_OK) {
+                        printf("VOC baseline set to: %.0f\n", baseline);
+                        printf("New thresholds: Index 100=%.0f, 200=%.0f, 300=%.0f, 400=%.0f\n",
+                               baseline, baseline + 5000.0f, baseline + 10000.0f, baseline + 15000.0f);
+                    } else {
+                        printf("Failed to set VOC baseline (valid range: 10000-60000)\n");
+                    }
+#else
+                    printf("SGP41 is not enabled\n");
+#endif
+                } else if (strncmp(line, "set_nox_baseline ", 17) == 0) {
+                    printf("\n");
+                    float baseline = atof(line + 17);
+#if ENABLE_SGP41
+                    esp_err_t ret = sgp41_set_nox_baseline(baseline);
+                    if (ret == ESP_OK) {
+                        printf("NOx baseline set to: %.0f\n", baseline);
+                        printf("New thresholds: Index 100=%.0f, 200=%.0f, 300=%.0f, 400=%.0f\n",
+                               baseline, baseline + 3000.0f, baseline + 7000.0f, baseline + 12000.0f);
+                    } else {
+                        printf("Failed to set NOx baseline (valid range: 5000-40000)\n");
+                    }
+#else
+                    printf("SGP41 is not enabled\n");
+#endif
+                } else if (strcmp(line, "get_baseline") == 0) {
+                    printf("\n");
+#if ENABLE_SGP41
+                    float voc_baseline = sgp41_get_voc_baseline();
+                    float nox_baseline = sgp41_get_nox_baseline();
+                    printf("Current baselines:\n");
+                    printf("  VOC: %.0f (default: 27000)\n", voc_baseline);
+                    printf("  NOx: %.0f (default: 15000)\n", nox_baseline);
+#else
+                    printf("SGP41 is not enabled\n");
+#endif
+                } else if (strncmp(line, "calibrate_co2 ", 14) == 0) {
+                    printf("\n");
+                    uint16_t target_co2 = (uint16_t)atoi(line + 14);
+#if ENABLE_SCD41
+                    if (target_co2 < 400 || target_co2 > 2000) {
+                        printf("Invalid CO2 value (valid range: 400-2000 ppm)\n");
+                        printf("Typical outdoor fresh air: 400 ppm\n");
+                    } else {
+                        printf("Starting SCD41 forced recalibration to %d ppm...\n", target_co2);
+                        printf("WARNING: Sensor must be in stable conditions for 3+ minutes\n");
+
+                        int16_t frc_correction = 0;
+                        esp_err_t ret = scd41_perform_forced_calibration(target_co2, &frc_correction);
+
+                        if (ret == ESP_OK) {
+                            printf("Calibration successful!\n");
+                            printf("FRC correction: %d ppm\n", frc_correction);
+                            printf("Restarting measurement...\n");
+                            vTaskDelay(pdMS_TO_TICKS(500));
+                            scd41_start_periodic_measurement();
+                        } else {
+                            printf("Calibration failed! Error: %s\n", esp_err_to_name(ret));
+                            printf("Please ensure:\n");
+                            printf("  1. Sensor has been running for 3+ minutes\n");
+                            printf("  2. Environment is stable (constant CO2)\n");
+                            printf("  3. Target CO2 matches actual concentration\n");
+                        }
+                    }
+#else
+                    printf("SCD41 is not enabled\n");
+#endif
                 } else if (strcmp(line, "help") == 0) {
-                    printf("\nAvailable commands:\n");
-                    printf("  set_alt_ref <altitude> - Set altitude reference in meters\n");
-                    printf("  help                   - Show this help message\n");
+                    printf("\n=== AirSense Available Commands ===\n");
+                    printf("  set_alt_ref <altitude>   - Set altitude reference in meters (for DPS310)\n");
+                    printf("                             Example: set_alt_ref 100\n");
+                    printf("  set_voc_baseline <value> - Set VOC baseline raw value (for SGP41)\n");
+                    printf("                             Example: set_voc_baseline 30000\n");
+                    printf("                             Valid range: 10000-60000, default: 27000\n");
+                    printf("  set_nox_baseline <value> - Set NOx baseline raw value (for SGP41)\n");
+                    printf("                             Example: set_nox_baseline 16000\n");
+                    printf("                             Valid range: 5000-40000, default: 15000\n");
+                    printf("  get_baseline             - Show current VOC/NOx baseline values\n");
+                    printf("  calibrate_co2 <ppm>      - Forced CO2 calibration (for SCD41)\n");
+                    printf("                             Example: calibrate_co2 400 (outdoor air)\n");
+                    printf("                             Valid range: 400-2000 ppm\n");
+                    printf("  help                     - Show this help message\n");
+                    printf("\nNote: All sensor data is automatically displayed every 3 seconds\n");
                 } else if (line_pos > 0) {
                     printf("Unknown command: %s\n", line);
                     printf("Type 'help' for available commands\n");

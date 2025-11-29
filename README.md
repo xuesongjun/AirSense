@@ -100,7 +100,7 @@ AirSense/
 - 通信协议: I2C
 - I2C地址: 0x59
 - 输出: 原始信号值 (raw) + 空气质量指数 (1-500)
-- 预热时间: 45秒
+- 预热时间: 10秒 conditioning + 45秒算法初始化
 - 特性: 湿度/温度补偿（使用SHT85数据）
 
 **测量参数说明**:
@@ -125,11 +125,23 @@ AirSense/
 400-500: 很差 - 严重污染，必须立即通风或离开
 ```
 
-**注意事项**:
-- VOC/NOx Index 是相对指标，用于监测空气质量变化趋势
-- 不是法规标准浓度值 (ppm)，而是基于传感器原始值的绝对阈值映射
-- 适合日常室内空气质量监测，判断是否需要通风
-- 传感器预热45秒后开始输出有效 Index 值
+**重要说明**:
+- **Index 是相对指标**，用于监测同一环境下的空气质量变化趋势
+- **不是绝对浓度值** (ppb/ppm)，SGP41 传感器本身不能直接测量绝对 VOC 浓度
+- **不同环境的基线不同**：城市室内、郊区室外的"正常"raw 值可能相差数千
+- **传感器个体差异**：同型号传感器在相同环境下的 raw 值也会有差异
+- **适用场景**：
+  - ✅ 监测开窗通风效果（Index 下降）
+  - ✅ 检测烹饪/清洁等活动导致的污染（Index 上升）
+  - ✅ 日常室内空气质量趋势跟踪
+  - ❌ 不适合作为法规标准依据（需要专业认证设备）
+  - ❌ 不适合跨设备/跨环境对比
+
+**算法实现**：
+- 本项目使用**固定阈值映射算法**（基于 Sensirion 典型值范围）
+- VOC baseline = 27000 (Index 100 边界)
+- 与 Sensirion 官方自适应算法不同（官方需要 12-24 小时学习期）
+- 优点：立即可用，无需等待学习；缺点：可能不适应所有环境
 
 #### SPS30 (颗粒物传感器)
 - 通信协议: I2C
@@ -234,8 +246,232 @@ I (5405) AirSense: === Reading Sensors ===
 ### 当前功能 (验证机版本)
 
 1. **传感器初始化**: 系统启动时自动初始化所有传感器
-2. **数据采集**: 每5秒读取一次所有传感器数据
-3. **串口输出**: 实时通过串口输出传感器读数
+2. **SCD41自动温度补偿**: 启动时自动对比SHT85和SCD41温度,设置温度偏移补偿(补偿SCD41自热效应)
+3. **数据采集**: 每3秒读取一次所有传感器数据
+4. **串口输出**: 实时通过串口输出传感器读数
+5. **命令行交互**: 通过串口终端发送命令进行配置
+
+### 可用命令
+
+系统通过串口监视器提供交互式命令行界面，支持以下命令：
+
+#### `help`
+显示所有可用命令的帮助信息
+
+```bash
+help
+```
+
+输出示例：
+```
+=== AirSense Available Commands ===
+  set_alt_ref <altitude>   - Set altitude reference in meters (for DPS310)
+                             Example: set_alt_ref 100
+  set_voc_baseline <value> - Set VOC baseline raw value (for SGP41)
+                             Example: set_voc_baseline 30000
+                             Valid range: 10000-60000, default: 27000
+  set_nox_baseline <value> - Set NOx baseline raw value (for SGP41)
+                             Example: set_nox_baseline 16000
+                             Valid range: 5000-40000, default: 15000
+  get_baseline             - Show current VOC/NOx baseline values
+  calibrate_co2 <ppm>      - Forced CO2 calibration (for SCD41)
+                             Example: calibrate_co2 400 (outdoor air)
+                             Valid range: 400-2000 ppm
+  help                     - Show this help message
+
+Note: All sensor data is automatically displayed every 3 seconds
+```
+
+#### `set_alt_ref <altitude>`
+设置海拔高度参考值（单位：米），用于 DPS310 气压传感器计算海拔高度
+
+**参数**:
+- `<altitude>`: 当前位置的海拔高度（米）
+
+**示例**:
+```bash
+# 设置海拔为 100 米
+set_alt_ref 100
+
+# 设置海拔为海平面（0 米）
+set_alt_ref 0
+
+# 设置海拔为 1500 米（高原地区）
+set_alt_ref 1500
+```
+
+**说明**:
+- DPS310 传感器测量的是绝对气压值
+- 通过设置当前位置的真实海拔，可以让传感器计算相对海拔变化
+- 海拔公式: `h = 44330 * (1 - (P/P0)^0.1903)`，其中 P0 为参考气压
+- 此命令仅在编译时启用 DPS310 传感器（`ENABLE_DPS310 1`）时可用
+
+**注意事项**:
+- 首次使用建议在已知海拔位置设置参考值
+- 设置后，传感器会根据当前气压计算相对海拔高度
+- 气压会随天气变化，海拔计算值会有±5米的正常波动
+
+#### `set_voc_baseline <value>`
+设置 SGP41 传感器的 VOC（挥发性有机化合物）基线值
+
+**参数**:
+- `<value>`: VOC 原始信号基线值（有效范围：10000-60000，默认：27000）
+
+**示例**:
+```bash
+# 设置 VOC 基线为 30000（适用于城市室内环境）
+set_voc_baseline 30000
+
+# 设置 VOC 基线为 25000（适用于郊区/农村环境）
+set_voc_baseline 25000
+
+# 根据当前环境的实际 raw 值设置
+set_voc_baseline 28500
+```
+
+**说明**:
+- 基线值是 Index = 100 的边界，代表"优秀"空气质量的上限
+- 设置后，Index 的阈值会自动调整：
+  - Index 1-100（优秀）: raw ≤ baseline
+  - Index 100-200（良好）: baseline < raw ≤ baseline+5000
+  - Index 200-300（中等）: baseline+5000 < raw ≤ baseline+10000
+  - Index 300-400（较差）: baseline+10000 < raw ≤ baseline+15000
+  - Index 400-500（很差）: raw > baseline+15000
+- 此命令仅在编译时启用 SGP41 传感器时可用
+
+**如何确定合适的基线值**:
+1. 在通风良好的干净环境中运行设备 30 分钟
+2. 观察串口输出的 `VOC raw` 值（例如：`[SGP41] VOC raw: 29500`）
+3. 取多次测量的平均值作为基线（例如：29000-30000 的平均值 = 29500）
+4. 使用命令设置：`set_voc_baseline 29500`
+
+**注意事项**:
+- 不同环境的"正常"raw 值差异很大（城市室内 vs 郊区室外可能相差数千）
+- 建议在目标使用环境中校准基线
+- 基线设置立即生效，无需重启设备
+- 设置不会持久化存储，重启后恢复默认值
+
+#### `set_nox_baseline <value>`
+设置 SGP41 传感器的 NOx（氮氧化物）基线值
+
+**参数**:
+- `<value>`: NOx 原始信号基线值（有效范围：5000-40000，默认：15000）
+
+**示例**:
+```bash
+# 设置 NOx 基线为 16000（适用于城市环境）
+set_nox_baseline 16000
+
+# 设置 NOx 基线为 14000（适用于农村环境）
+set_nox_baseline 14000
+
+# 根据当前环境的实际 raw 值设置
+set_nox_baseline 15500
+```
+
+**说明**:
+- 基线值是 Index = 100 的边界，代表"优秀"空气质量的上限
+- 设置后，Index 的阈值会自动调整：
+  - Index 1-100（优秀）: raw ≤ baseline
+  - Index 100-200（良好）: baseline < raw ≤ baseline+3000
+  - Index 200-300（中等）: baseline+3000 < raw ≤ baseline+7000
+  - Index 300-400（较差）: baseline+7000 < raw ≤ baseline+12000
+  - Index 400-500（很差）: raw > baseline+12000
+- 此命令仅在编译时启用 SGP41 传感器时可用
+
+**如何确定合适的基线值**:
+1. 在无燃气、无燃烧、无吸烟的干净环境中运行设备 30 分钟
+2. 观察串口输出的 `NOx raw` 值（例如：`[SGP41] NOx raw: 15800`）
+3. 取多次测量的平均值作为基线
+4. 使用命令设置：`set_nox_baseline 15800`
+
+**注意事项**:
+- NOx 主要来源：燃气灶、汽车尾气、吸烟
+- 城市环境的基线通常高于农村环境
+- 基线设置立即生效，无需重启设备
+- 设置不会持久化存储，重启后恢复默认值
+
+#### `get_baseline`
+显示当前 SGP41 传感器的 VOC 和 NOx 基线值
+
+```bash
+get_baseline
+```
+
+输出示例：
+```
+Current baselines:
+  VOC: 30000 (default: 27000)
+  NOx: 16000 (default: 15000)
+```
+
+**说明**:
+- 显示当前使用的基线值
+- 如果未手动设置，显示默认值
+- 用于确认基线设置是否生效
+
+#### `calibrate_co2 <ppm>`
+对 SCD41 传感器执行强制 CO2 校准（FRC - Forced Recalibration）
+
+**参数**:
+- `<ppm>`: 目标 CO2 浓度（有效范围：400-2000 ppm）
+
+**示例**:
+```bash
+# 在室外新鲜空气中校准到 400 ppm
+calibrate_co2 400
+
+# 在已知浓度环境中校准（如使用标准气体）
+calibrate_co2 1000
+```
+
+**使用步骤**:
+1. **准备环境**：将设备放置在目标CO2浓度环境中
+   - 室外新鲜空气：约400 ppm
+   - 标准气体：使用已知浓度的标准气体
+2. **稳定运行**：让设备在该环境中运行**至少3分钟**，确保读数稳定
+3. **执行校准**：输入命令 `calibrate_co2 400`（或实际CO2浓度）
+4. **等待完成**：校准过程约需400ms，完成后会显示FRC修正值
+5. **验证结果**：观察后续CO2读数是否接近目标值
+
+**输出示例**:
+```
+calibrate_co2 400
+
+Starting SCD41 forced recalibration to 400 ppm...
+WARNING: Sensor must be in stable conditions for 3+ minutes
+Calibration successful!
+FRC correction: -230 ppm
+Restarting measurement...
+```
+
+**说明**:
+- **FRC correction**: 显示校准修正值（当前读数与目标值的差值）
+  - 正值：传感器读数偏高，需要减去修正值
+  - 负值：传感器读数偏低，需要加上修正值
+- 校准值**会持久化存储**在SCD41内部，重启后仍然有效
+- 此命令仅在编译时启用 SCD41 传感器时可用
+
+**注意事项**:
+- ⚠️ **环境稳定性至关重要**：
+  - 必须在CO2浓度稳定的环境中进行
+  - 建议在室外无风、无人流的地方校准
+  - 室内校准需确保通风良好且人员活动停止3分钟以上
+- ⚠️ **校准频率**：
+  - 不建议频繁校准（每月1次即可）
+  - 过度校准可能降低精度
+- ⚠️ **校准失败原因**：
+  - 传感器运行时间不足3分钟
+  - 环境CO2浓度不稳定
+  - 目标值与实际浓度差异过大（>100 ppm）
+- 💡 **推荐做法**：
+  - 新传感器首次使用时在室外校准一次
+  - 之后依赖SCD41的自动自校准（ASC）功能
+  - 仅在发现读数明显偏差时手动校准
+
+**与S88LP读数对比**:
+- 校准后，SCD41读数应更接近S88LP（NDIR技术，更准确）
+- 如果校准后两者仍有差异，以S88LP为准
 
 ### 引脚配置修改
 
@@ -271,10 +507,46 @@ I (5405) AirSense: === Reading Sensors ===
 
 所有传感器使用不同的I2C地址（0x62, 0x59, 0x69, 0x77, 0x44），不会产生地址冲突。
 
+### SCD41自动温度偏移补偿
+
+系统启动时会自动执行SCD41温度偏移校准:
+
+**原理**:
+- SCD41内部有自热效应,传感器温度比环境温度高约1.5-4°C
+- 自热会影响CO2读数准确性(温度升高导致气压测量偏差)
+- 使用外部高精度温度传感器(SHT85)测量真实环境温度
+- 自动计算偏移量并设置到SCD41
+
+**校准过程**:
+1. 系统启动后等待6秒,让传感器稳定
+2. 同时读取SHT85和SCD41的温度
+3. 计算温度偏移 = SCD41温度 - SHT85温度
+4. 如果偏移在0.5~5°C范围内,自动设置到SCD41
+5. 同时设置海拔补偿为5m(南京浦口区海拔)
+6. 重启SCD41测量,使用补偿后的参数
+
+**日志输出示例**:
+```
+I (12345) AirSense: Starting SCD41 automatic temperature offset calibration...
+I (18456) AirSense: Temperature offset detected: 1.55°C (SCD41=27.40°C, SHT85=25.85°C)
+I (18567) AirSense: SCD41 temperature offset set to 1.55°C
+I (18678) AirSense: SCD41 sensor altitude set to 5m
+I (19123) AirSense: SCD41 periodic measurement restarted with calibration
+```
+
+**注意事项**:
+- 自动校准仅在同时启用SCD41和SHT85时生效
+- 温度偏移必须在0.5~5°C范围内才会设置(避免异常值)
+- 校准失败时会使用默认设置继续运行
+- 温度补偿不会持久化存储,每次重启都会重新校准
+
 ### 传感器预热时间
 
 - **SCD41**: 首次测量需要约60秒，建议预热5分钟后读数更稳定
-- **SGP41**: 需要45秒预热，之后立即输出稳定的 VOC/NOx Index
+- **SGP41**:
+  - Conditioning: 10秒（初始化时自动执行，Sensirion 官方要求）
+  - 算法预热: 45秒（返回有效 Index 前的等待时间）
+  - 总计: 约55秒后开始输出稳定数据
 - **SPS30**: 启动后约10秒开始输出稳定数据，建议预热30秒
 - **Dart WZ-H3-N**: 电化学传感器需要预热约1-2分钟
 - **DPS310**: 立即可用，无需预热
@@ -283,7 +555,10 @@ I (5405) AirSense: === Reading Sensors ===
 ### 校准说明
 
 - **SCD41 (CO2传感器)**: 支持FRC（强制校准）和ASC（自动自校准），ASC需在新鲜空气中定期运行
-- **SGP41 (VOC/NOx传感器)**: 使用绝对阈值映射算法，无需校准，预热45秒后立即可用
+- **SGP41 (VOC/NOx传感器)**:
+  - 使用固定阈值映射算法，无需校准
+  - 自动执行 conditioning 步骤（初始化时）
+  - Index 用于相对变化监测，不代表绝对浓度
 - **SPS30 (颗粒物传感器)**: 出厂已校准，支持定期自动清洁功能延长寿命
 - **WZ-H3-N (HCHO传感器)**: 出厂已校准，建议根据温湿度进行软件补偿
 - **DPS310 (气压传感器)**: 出厂已校准，无需用户校准
