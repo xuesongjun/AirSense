@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
-        "sensors/senseair_s8.c"
+        "sensors/senseair_s88lp.c"
         "sensors/scd41.c"
         "sensors/sgp41.c"
         "sensors/sht85.c"
