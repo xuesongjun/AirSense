@@ -8,7 +8,7 @@
  * - Sensirion SCD41: CO2传感器 (I2C0)
  * - Sensirion SGP41: VOC/NOx传感器 (I2C0)
  * - Sensirion SPS30: PM颗粒物传感器 (I2C0)
- * - Dart WZ-H3-N: HCHO甲醛电化学传感器 (UART1，与S88LP二选一)
+ * - Prosense WZ-H3-N: HCHO甲醛电化学传感器 (LP_UART GPIO4/5)
  * - Infineon DPS310: 气压/温度传感器 (I2C0)
  * - Sensirion SHT85: 温湿度传感器 (I2C0)
  */
@@ -27,27 +27,28 @@
 #include "sensors/scd41.h"          // SCD41 CO2传感器
 #include "sensors/sgp41.h"          // SGP41 VOC/NOx传感器
 #include "sensors/sht85.h"          // SHT85温湿度传感器
-#include "sensors/dart_wzh3n.h"     // WZ-H3-N HCHO传感器
+#include "sensors/prosense_wzh3n.h" // WZ-H3-N HCHO传感器 (Prosense普晟)
 #include "sensors/dps310_legacy.h"  // DPS310气压传感器 (旧版I2C API)
 
 static const char *TAG = "AirSense";
 
 // 传感器使能开关
-#define ENABLE_S88LP            1  // S88LP CO2传感器 (UART1) - 已启用
+#define ENABLE_S88LP            1  // S88LP CO2传感器 (UART1 硬件串口)
 #define ENABLE_SCD41            1  // SCD41 CO2传感器 (I2C0)
 #define ENABLE_SGP41            1  // SGP41 VOC/NOx传感器 (I2C0)
 #define ENABLE_SHT85            1  // SHT85温湿度传感器 (I2C0)
-#define ENABLE_DART_WZH3N       0  // WZ-H3-N HCHO传感器 (UART1，与S88LP二选一)
+#define ENABLE_PROSENSE_WZH3N   1  // WZ-H3-N HCHO甲醛传感器 (LP_UART GPIO4/GPIO5)
 #define ENABLE_DPS310           1  // DPS310气压传感器 (I2C0) - 使用旧版I2C API
 
 // 引脚定义 (ESP32-C5-DevKitC-1)
-// UART1 - S88LP CO2传感器 或 WZ-H3-N HCHO传感器 (二选一)
-#define S88LP_TXD_PIN           GPIO_NUM_5
-#define S88LP_RXD_PIN           GPIO_NUM_4
+// UART1 - S88LP CO2传感器 (硬件UART)
+#define S88LP_TXD_PIN           GPIO_NUM_6
+#define S88LP_RXD_PIN           GPIO_NUM_7
 
-// UART1 - Dart WZ-H3-N (与S88LP共用UART1，不能同时启用)
-#define DART_TXD_PIN            GPIO_NUM_5
-#define DART_RXD_PIN            GPIO_NUM_4
+// LP_UART - Prosense WZ-H3-N HCHO甲醛传感器 (硬件UART)
+// LP_UART引脚固定在LP_GPIO0~5, 对应GPIO0~5
+#define PROSENSE_TXD_PIN        GPIO_NUM_5
+#define PROSENSE_RXD_PIN        GPIO_NUM_4
 
 // I2C0 - SGP41和DPS310共用 (ESP32-C5开发板)
 #define I2C0_SDA_PIN            GPIO_NUM_2
@@ -55,6 +56,7 @@ static const char *TAG = "AirSense";
 
 // 注: 所有I2C传感器通过扩展板共用I2C0
 // 注: UART0用于固件烧录和日志输出，不可占用
+// 注: WZ-H3-N使用LP_UART(GPIO4/GPIO5)硬件串口
 
 // 测量间隔 (ms) - 128次过采样测量时间~344ms
 #define MEASURE_INTERVAL_MS     3000  // 3秒间隔,给128次过采样足够余量
@@ -223,20 +225,20 @@ static void init_all_sensors(void) {
     }
 #endif
 
-#if ENABLE_DART_WZH3N
-    // 初始化Dart WZ-H3-N (UART1) - ESP32-C5不支持UART2
-    dart_wzh3n_config_t dart_config = {
-        .uart_num = UART_NUM_1,
-        .tx_pin = DART_TXD_PIN,
-        .rx_pin = DART_RXD_PIN,
-        .baud_rate = 9600,
-        .active_upload = false,
+#if ENABLE_PROSENSE_WZH3N
+    // 初始化Prosense WZ-H3-N HCHO甲醛传感器 (LP_UART GPIO4/GPIO5)
+    // 使用问答模式，可直接获取ug/m³和ppb两种单位数据
+    prosense_wzh3n_config_t prosense_config = {
+        .tx_pin = PROSENSE_TXD_PIN,
+        .rx_pin = PROSENSE_RXD_PIN,
+        .baud_rate = PROSENSE_WZH3N_BAUD_RATE,
+        .active_upload = false,  // 问答模式
     };
-    ret = dart_wzh3n_init(&dart_config);
+    ret = prosense_wzh3n_init(&prosense_config);
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Dart WZ-H3-N initialized");
+        ESP_LOGI(TAG, "Prosense WZ-H3-N initialized (LP_UART on GPIO%d/GPIO%d, Q&A Mode)", PROSENSE_TXD_PIN, PROSENSE_RXD_PIN);
     } else {
-        ESP_LOGE(TAG, "Failed to initialize Dart WZ-H3-N: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to initialize Prosense WZ-H3-N: %s", esp_err_to_name(ret));
     }
 #endif
 
@@ -274,14 +276,15 @@ static void init_all_sensors(void) {
     // SCD41自动温度偏移补偿
     // 等待传感器稳定并获取第一次测量值
     ESP_LOGI(TAG, "Starting SCD41 automatic temperature offset calibration...");
-    vTaskDelay(pdMS_TO_TICKS(6000));  // 等待6秒,确保SCD41和SHT85都有数据
+    ESP_LOGI(TAG, "Waiting for sensors to stabilize (10 seconds)...");
+    vTaskDelay(pdMS_TO_TICKS(10000));  // 等待10秒,确保SCD41完成至少一个完整的5秒周期
 
     sht85_data_t sht_cal;
     scd41_data_t scd_cal;
     bool calibration_success = false;
 
-    // 尝试读取3次,确保获取有效数据
-    for (int i = 0; i < 3; i++) {
+    // 尝试读取5次,确保获取有效数据 (每次间隔1秒,最多等待5秒)
+    for (int i = 0; i < 5; i++) {
         esp_err_t sht_ret = sht85_read_measurement(SHT85_REPEATABILITY_HIGH, &sht_cal);
         vTaskDelay(pdMS_TO_TICKS(100));
         esp_err_t scd_ret = scd41_read_measurement(&scd_cal);
@@ -337,12 +340,17 @@ static void init_all_sensors(void) {
             break;
         }
 
-        ESP_LOGW(TAG, "Calibration attempt %d/3 failed, retrying...", i + 1);
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        // 如果数据未就绪,等待1秒后重试 (给SCD41时间产生下一个数据)
+        if (i < 4) {  // 最后一次不需要等待
+            ESP_LOGD(TAG, "Temperature calibration attempt %d/5 failed, retrying in 1 second...", i + 1);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
     }
 
     if (!calibration_success) {
-        ESP_LOGW(TAG, "SCD41 automatic temperature calibration failed, using default settings");
+        ESP_LOGW(TAG, "SCD41 automatic temperature calibration failed after 5 attempts");
+        ESP_LOGW(TAG, "This may indicate sensor communication issues");
+        ESP_LOGW(TAG, "Continuing with default configuration");
     }
 #endif
 }
@@ -416,16 +424,16 @@ static void sensor_task(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(100));
 #endif
 
-#if ENABLE_DART_WZH3N
-        // 读取Dart WZ-H3-N - NH3
-        dart_wzh3n_data_t dart_data;
-        if (dart_wzh3n_read_concentration(&dart_data) == ESP_OK && dart_data.valid) {
-            printf("[Dart] NH3: %.2f ppm, Full Range: %d ppm\n",
-                   dart_data.nh3_ppm, dart_data.full_range);
+#if ENABLE_PROSENSE_WZH3N
+        // 读取Prosense WZ-H3-N - HCHO甲醛 (问答模式)
+        prosense_wzh3n_data_t prosense_data;
+        if (prosense_wzh3n_read_concentration(&prosense_data) == ESP_OK && prosense_data.valid) {
+            printf("[WZ-H3-N] HCHO: %d ug/m³ (%.3f mg/m³) / %d ppb (%.3f ppm)\n",
+                   prosense_data.hcho_ugm3, prosense_data.hcho_mgm3,
+                   prosense_data.hcho_ppb, prosense_data.hcho_ppm);
         } else {
-            printf("[Dart] Failed to read NH3\n");
+            printf("[WZ-H3-N] Failed to read HCHO\n");
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
 #endif
 
 #if ENABLE_DPS310

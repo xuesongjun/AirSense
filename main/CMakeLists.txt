@@ -5,7 +5,7 @@ idf_component_register(
         "sensors/scd41.c"
         "sensors/sgp41.c"
         "sensors/sht85.c"
-        "sensors/dart_wzh3n.c"
+        "sensors/prosense_wzh3n.c"
         "sensors/dps310_legacy.c"
         "algorithms/sensirion_gas_index_algorithm.c"
     INCLUDE_DIRS

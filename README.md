@@ -10,7 +10,7 @@ AirSense是一个集成多种空气质量传感器的检测系统，可以实时
 - **CO₂浓度 (光声)**: Sensirion SCD41（光声技术，内置温湿度测量）
 - **VOC 与 NOx 指数**: Sensirion SGP41（双 MOS 气体传感器，需配合 VOC/NOx 算法库）
 - **颗粒物（PM1/PM2.5/PM4/PM10）**: Sensirion SPS30（激光散射粒子传感器）
-- **甲醛 (HCHO)浓度**: Dart WZ-H3-N 电化学HCHO传感器，需要温度/湿度补偿
+- **甲醛 (HCHO)浓度**: Prosense WZ-H3-N 燃料电池HCHO传感器（抗酒精干扰，LP_UART硬件串口）
 - **气压和温度**: Infineon DPS310（高精度气压计）
 - **温湿度**: Sensirion SHT85 数字温湿度传感器（高精度工业级）
 
@@ -23,31 +23,36 @@ AirSense是一个集成多种空气质量传感器的检测系统，可以实时
 
 ### 传感器列表
 
-| 传感器 | 测量参数 | 接口 | I2C地址 | UART/端口 |
+| 传感器 | 测量参数 | 接口 | I2C地址 | UART/GPIO |
 |--------|----------|------|---------|----------|
-| S88LP | CO2 (NDIR红外) | UART | - | UART1 |
+| S88LP | CO2 (NDIR红外) | UART1硬件 | - | GPIO6(TX)/GPIO7(RX) |
 | SCD41 | CO2/温度/湿度 | I2C | 0x62 | I2C0 |
 | SGP41 | VOC/NOx指数 | I2C | 0x59 | I2C0 |
 | SPS30 | PM1/PM2.5/PM4/PM10 | I2C | 0x69 | I2C0 |
-| WZ-H3-N | HCHO (0-5 ppm) | UART | - | UART1* |
+| WZ-H3-N | HCHO甲醛 (0-5 ppm) | LP_UART硬件 | - | GPIO5(TX)/GPIO4(RX) 固定 |
 | DPS310 | 气压/温度 | I2C | 0x77 | I2C0 |
 | SHT85 | 温度/湿度 | I2C | 0x44 | I2C0 |
 
-*注: S88LP和WZ-H3-N共用UART1，不能同时启用（ESP32-C5仅有UART1可用于外设）
+*注: ESP32-C5有3个UART: UART0(日志)、UART1(S88LP)、LP_UART(WZ-H3-N)*
 
 ### 引脚连接
 
 ```
 ESP32-C5 引脚分配:
-├── UART1 (S88LP CO2传感器 或 WZ-H3-N HCHO传感器，二选一)
-│   ├── TXD: GPIO5
-│   └── RXD: GPIO4
+├── UART1 (硬件串口 - S88LP CO2传感器)
+│   ├── TXD: GPIO6 (MCU TX -> 传感器 RX)
+│   └── RXD: GPIO7 (MCU RX <- 传感器 TX)
+├── LP_UART (硬件串口 - WZ-H3-N HCHO甲醛传感器)
+│   ├── TXD: GPIO5 (MCU TX -> 传感器 RX，固定引脚)
+│   └── RXD: GPIO4 (MCU RX <- 传感器 TX，固定引脚)
 └── I2C0 (所有I2C传感器通过扩展板共用)
     ├── SDA: GPIO2
     └── SCL: GPIO3
     └── 连接传感器: SCD41, SGP41, SPS30, DPS310, SHT85
 
-注: UART0 (TXD0/RXD0) 用于固件烧录和日志输出，不可占用
+注1: UART0 用于固件烧录和日志输出，不可占用
+注2: LP_UART是ESP32-C5的低功耗UART，引脚固定在GPIO4/GPIO5
+注3: MCU的TXD连接到传感器的RXD，MCU的RXD连接到传感器的TXD
 ```
 
 ## 软件架构
@@ -70,7 +75,7 @@ AirSense/
     └── sensors/                # 传感器驱动
         ├── senseair_s88lp.h/c  # SenseAir S88LP CO2驱动 (Modbus)
         ├── sgp41.h/c           # SGP41 VOC/NOx驱动
-        └── dart_wzh3n.h/c      # Dart WZ-H3-N HCHO驱动
+        └── prosense_wzh3n.h/c  # Prosense WZ-H3-N HCHO驱动
         # DPS310/SCD41/SPS30/SHT85使用esp-idf-lib库
 ```
 
@@ -152,14 +157,34 @@ AirSense/
 - 粒径范围: 0.3-10 μm
 - 采样间隔: 1秒
 
-#### Dart WZ-H3-N (HCHO电化学传感器)
-- 通信协议: UART
-- 波特率: 9600 bps
-- 工作模式: 主动上传/问答模式
-- 测量范围: 0-5 ppm (甲醛)
+#### Prosense WZ-H3-N (HCHO固态电解质传感器)
+- 通信协议: LP_UART硬件串口 (GPIO4/GPIO5固定)
+- 波特率: 9600 bps (8N1)
+- 工作模式: 问答模式 (可直接获取ug/m³和ppb双单位数据)
+- 测量范围: 0-1 ppm HCHO (最大过载5ppm)
 - 分辨率: 0.01 ppm
-- 响应时间: < 30秒
-- 特性: 需要温度/湿度补偿
+- 响应时间: < 90秒 (T90)
+- 检测精度: ±30ppb 或 ±10%取大值 (25±3°C)
+- 特性: 抗酒精干扰、寿命长 (6年)、耐高温 (-40~70°C)
+
+**甲醛(HCHO)浓度标准与健康影响**:
+
+| 等级 | 浓度范围 | 说明 |
+|------|----------|------|
+| 优秀 | ≤30 ug/m³ (≤0.03 mg/m³) | 非常安全，适合敏感人群 |
+| 良好 | 30-50 ug/m³ (0.03-0.05 mg/m³) | 安全，适合长期居住 |
+| 合格 | 50-80 ug/m³ (0.05-0.08 mg/m³) | 符合国标GB/T 18883，可接受 |
+| 轻度超标 | 80-100 ug/m³ (0.08-0.10 mg/m³) | 超过国标，建议通风 |
+| 中度超标 | 100-200 ug/m³ (0.10-0.20 mg/m³) | 可能引起眼鼻刺激 |
+| 严重超标 | >200 ug/m³ (>0.20 mg/m³) | 明显不适，需立即处理 |
+
+**相关标准**:
+- **中国 GB/T 18883-2022**: ≤0.08 mg/m³ (80 ug/m³) - 关闭门窗12小时
+- **中国 GB 50325-2020**: Ⅰ类建筑≤0.07 mg/m³，Ⅱ类≤0.08 mg/m³
+- **WHO世界卫生组织**: 长期≤0.1 mg/m³，短期(30分钟)≤0.2 mg/m³
+- **敏感人群建议**: ≤0.05 mg/m³ (50 ug/m³)
+
+**单位换算**: 1 ppm ≈ 1.25 mg/m³ = 1250 ug/m³ (25°C, 1atm)
 
 #### DPS310 (气压/温度传感器)
 - 通信协议: I2C/SPI
@@ -225,7 +250,7 @@ I (355) SGP41: Serial: 0x0000000012345678
 I (360) SGP41: Self-test passed
 I (365) SPS30: SPS30 initialized on I2C0 (SDA:2, SCL:3)
 I (370) SPS30: Serial: 12345678901234567890
-I (375) Dart_WZH3N: Dart WZ-H3-N initialized on UART1 (TXD:5, RXD:4, Baud:9600)
+I (375) WZ-H3-N: Prosense WZ-H3-N initialized on LP_UART (TX:GPIO5, RX:GPIO4, Q&A Mode)
 I (380) DPS310: DPS310 initialized on I2C0 (SDA:2, SCL:3)
 I (385) DPS310: Product ID: 0x10, Revision ID: 0x01
 I (390) SHT85: SHT85 initialized on I2C0 (SDA:2, SCL:3)
@@ -235,7 +260,7 @@ I (5405) AirSense: === Reading Sensors ===
 [SCD41] CO2: 412 ppm, Temp: 23.5°C, Humidity: 45.2% RH
 [SGP41] VOC raw: 23456, NOx raw: 12345, VOC index: 178, NOx index: 93
 [SPS30] PM1.0: 5.2 μg/m³, PM2.5: 8.7 μg/m³, PM4.0: 10.3 μg/m³, PM10: 11.5 μg/m³
-[Dart] HCHO: 0.02 ppm
+[WZ-H3-N] HCHO: 8 ug/m³ (0.008 mg/m³) / 6 ppb (0.006 ppm)
 [DPS310] Pressure: 1013.25 hPa, Temp: 23.4°C
 [SHT85] Temp: 23.6°C, Humidity: 45.0% RH
 
@@ -478,11 +503,13 @@ Restarting measurement...
 如需修改引脚配置，请编辑 [main.c](main/main.c) 文件中的引脚定义：
 
 ```c
-// UART1 - S88LP CO2传感器 或 WZ-H3-N HCHO传感器 (二选一)
-#define S88LP_TXD_PIN           GPIO_NUM_5
-#define S88LP_RXD_PIN           GPIO_NUM_4
-#define DART_TXD_PIN            GPIO_NUM_5
-#define DART_RXD_PIN            GPIO_NUM_4
+// UART1 - S88LP CO2传感器 (硬件UART)
+#define S88LP_TXD_PIN           GPIO_NUM_6
+#define S88LP_RXD_PIN           GPIO_NUM_7
+
+// LP_UART - Prosense WZ-H3-N HCHO传感器 (硬件UART，引脚固定)
+#define PROSENSE_TXD_PIN        GPIO_NUM_5
+#define PROSENSE_RXD_PIN        GPIO_NUM_4
 
 // I2C0 - 所有I2C传感器 (SCD41, SGP41, SPS30, DPS310, SHT85)
 #define I2C0_SDA_PIN            GPIO_NUM_2
@@ -518,8 +545,8 @@ Restarting measurement...
 - 自动计算偏移量并设置到SCD41
 
 **校准过程**:
-1. 系统启动后等待6秒,让传感器稳定
-2. 同时读取SHT85和SCD41的温度
+1. 系统启动后等待10秒,让传感器稳定(确保SCD41完成至少一个5秒测量周期)
+2. 尝试最多5次读取SHT85和SCD41的温度(每次间隔1秒)
 3. 计算温度偏移 = SCD41温度 - SHT85温度
 4. 如果偏移在0.5~5°C范围内,自动设置到SCD41
 5. 同时设置海拔补偿为5m(南京浦口区海拔)
@@ -528,10 +555,12 @@ Restarting measurement...
 **日志输出示例**:
 ```
 I (12345) AirSense: Starting SCD41 automatic temperature offset calibration...
-I (18456) AirSense: Temperature offset detected: 1.55°C (SCD41=27.40°C, SHT85=25.85°C)
-I (18567) AirSense: SCD41 temperature offset set to 1.55°C
-I (18678) AirSense: SCD41 sensor altitude set to 5m
-I (19123) AirSense: SCD41 periodic measurement restarted with calibration
+I (12346) AirSense: Waiting for sensors to stabilize (10 seconds)...
+I (22456) AirSense: Temperature offset detected: 2.56°C (SCD41=24.04°C, SHT85=21.48°C)
+I (22567) AirSense: Normal self-heating detected, applying temperature offset compensation
+I (22678) AirSense: SCD41 temperature offset set to 2.56°C
+I (22789) AirSense: SCD41 sensor altitude set to 5m
+I (23123) AirSense: SCD41 periodic measurement restarted with calibration
 ```
 
 **注意事项**:
@@ -539,6 +568,7 @@ I (19123) AirSense: SCD41 periodic measurement restarted with calibration
 - 温度偏移必须在0.5~5°C范围内才会设置(避免异常值)
 - 校准失败时会使用默认设置继续运行
 - 温度补偿不会持久化存储,每次重启都会重新校准
+- 首次启动需要约12-15秒完成温度校准(10秒预热 + 最多5秒重试)
 
 ### 传感器预热时间
 
@@ -548,7 +578,7 @@ I (19123) AirSense: SCD41 periodic measurement restarted with calibration
   - 算法预热: 45秒（返回有效 Index 前的等待时间）
   - 总计: 约55秒后开始输出稳定数据
 - **SPS30**: 启动后约10秒开始输出稳定数据，建议预热30秒
-- **Dart WZ-H3-N**: 电化学传感器需要预热约1-2分钟
+- **Prosense WZ-H3-N**: 固态电解质传感器需要预热约90秒 (T90)
 - **DPS310**: 立即可用，无需预热
 - **SHT85**: 上电后立即可用，建议等待2秒
 
