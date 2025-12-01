@@ -359,6 +359,26 @@ esp_err_t scd41_set_sensor_altitude(uint16_t altitude_m) {
     return ret;
 }
 
+esp_err_t scd41_set_ambient_pressure(uint16_t pressure_hpa) {
+    // 验证气压范围 (700-1200 hPa)
+    if (pressure_hpa < 700 || pressure_hpa > 1200) {
+        ESP_LOGE(TAG, "Invalid pressure: %d hPa (valid range: 700-1200)", pressure_hpa);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // 注意: 此命令可以在测量期间调用，不需要停止测量
+    uint8_t params[2];
+    params[0] = (pressure_hpa >> 8) & 0xFF;
+    params[1] = pressure_hpa & 0xFF;
+
+    esp_err_t ret = scd41_write_command(SCD41_CMD_SET_PRESSURE, params, 2);
+    if (ret == ESP_OK) {
+        ESP_LOGD(TAG, "Ambient pressure set to %d hPa", pressure_hpa);
+    }
+
+    return ret;
+}
+
 esp_err_t scd41_perform_forced_calibration(uint16_t target_co2, int16_t *frc_correction) {
     if (frc_correction == NULL) {
         return ESP_ERR_INVALID_ARG;

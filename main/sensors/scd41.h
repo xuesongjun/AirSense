@@ -38,6 +38,7 @@ extern "C" {
 #define SCD41_CMD_GET_TEMP_OFFSET   0x2318  // 获取温度补偿
 #define SCD41_CMD_SET_SENSOR_ALT    0x2427  // 设置海拔补偿
 #define SCD41_CMD_GET_SENSOR_ALT    0x2322  // 获取海拔补偿
+#define SCD41_CMD_SET_PRESSURE      0xE000  // 设置环境气压补偿
 #define SCD41_CMD_FORCE_CALIBRATION 0x362F  // 强制校准
 
 /**
@@ -130,6 +131,17 @@ esp_err_t scd41_set_temperature_offset(float temp_offset);
  * @return esp_err_t ESP_OK成功，其他失败
  */
 esp_err_t scd41_set_sensor_altitude(uint16_t altitude_m);
+
+/**
+ * @brief 设置环境气压补偿 (动态补偿，测量期间可用)
+ *
+ * 注意: 此命令可在测量期间调用，用于实时气压补偿
+ * 如果设置了气压，则海拔设置会被忽略
+ *
+ * @param pressure_hpa 环境气压 (hPa), 范围 700-1200
+ * @return esp_err_t ESP_OK成功，其他失败
+ */
+esp_err_t scd41_set_ambient_pressure(uint16_t pressure_hpa);
 
 /**
  * @brief 强制校准CO2到指定浓度

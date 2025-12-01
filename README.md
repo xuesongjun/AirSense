@@ -84,29 +84,52 @@ AirSense/
 #### SenseAir S88LP (CO2红外传感器)
 - 通信协议: UART (Modbus)
 - 波特率: 9600 bps
-- 测量技术: NDIR红外
-- CO2测量范围: 400-2000 ppm (标准) / 400-10000 ppm (扩展)
-- CO2精度: ±40 ppm + 3% of reading
-- 响应时间: < 2分钟 (90%)
-- 预热时间: < 2分钟
-- 寿命: > 15年
+- 测量技术: NDIR红外 (非色散红外)
+
+| 参数 | 规格 |
+|------|------|
+| 测量范围 | 400-2000 ppm (标准) / 400-10000 ppm (扩展) |
+| 精度 | ±40 ppm + 3% of reading |
+| 分辨率 | 1 ppm |
+| 响应时间 | < 2分钟 (T90) |
+| 预热时间 | < 2分钟 |
+| 工作温度 | 0 to 50°C |
+| 寿命 | > 15年 |
+
+**误差示例**: 读数800ppm时，误差 = ±40 + 800×3% = ±64 ppm，实际范围736-864 ppm
 
 #### SCD41 (CO2/温湿度传感器)
 - 通信协议: I2C
 - I2C地址: 0x62
-- CO2测量范围: 400-5000 ppm
-- CO2精度: ±(40 ppm + 5% of reading)
-- 温度范围: -10 to 60°C, 精度: ±0.8°C
-- 湿度范围: 0-100% RH, 精度: ±6% RH
-- 响应时间: 60秒
-- 采样间隔: 5秒
+- 测量技术: 光声原理 (Photoacoustic)
+- **气压补偿**: 使用DPS310实时气压自动补偿
+
+| 参数 | 范围 | 精度/误差 |
+|------|------|-----------|
+| CO2 | 400-5000 ppm | ±(40 ppm + 5% of reading) |
+| 温度 | -10 to 60°C | ±0.8°C (15-35°C), ±1.5°C (全范围) |
+| 湿度 | 0-100% RH | ±6% RH (15-35°C), ±9% RH (全范围) |
+| 响应时间 | 60秒 (T63) | - |
+| 采样间隔 | 5秒 | - |
+
+**误差示例**: CO2读数1000ppm时，误差 = ±40 + 1000×5% = ±90 ppm，实际范围910-1090 ppm
 
 #### SGP41 (VOC/NOx传感器)
 - 通信协议: I2C
 - I2C地址: 0x59
-- 输出: 原始信号值 (raw) + 空气质量指数 (1-500)
-- 预热时间: 10秒 conditioning + 45秒算法初始化
+- 测量技术: 金属氧化物半导体 (MOX)
 - 特性: 湿度/温度补偿（使用SHT85数据）
+
+| 参数 | 规格 |
+|------|------|
+| VOC Raw范围 | 0-65535 (典型室内: 25000-35000) |
+| NOx Raw范围 | 0-65535 (典型室内: 14000-18000) |
+| Index输出 | 1-500 (相对空气质量指数) |
+| 预热时间 | 10秒 conditioning + 45秒算法初始化 |
+| 工作温度 | -40 to 85°C |
+| 寿命 | > 10年 |
+
+**注意**: SGP41输出的是相对指数，不是绝对浓度值(ppb/ppm)。Index用于监测空气质量变化趋势。
 
 **测量参数说明**:
 - **VOC (Volatile Organic Compounds - 挥发性有机化合物)**
@@ -151,21 +174,49 @@ AirSense/
 #### SPS30 (颗粒物传感器)
 - 通信协议: I2C
 - I2C地址: 0x69
-- 测量参数: PM1.0, PM2.5, PM4.0, PM10
-- 测量范围: 0-1000 μg/m³
-- 精度: ±10 μg/m³ (0-100 μg/m³)
-- 粒径范围: 0.3-10 μm
-- 采样间隔: 1秒
+- 测量技术: 激光散射
 
-#### Prosense WZ-H3-N (HCHO固态电解质传感器)
+| 参数 | 范围 | 精度/误差 |
+|------|------|-----------|
+| PM1.0 | 0-1000 μg/m³ | ±10 μg/m³ (0-100), ±10% (100-1000) |
+| PM2.5 | 0-1000 μg/m³ | ±10 μg/m³ (0-100), ±10% (100-1000) |
+| PM4.0 | 0-1000 μg/m³ | ±25 μg/m³ (0-100), ±25% (100-1000) |
+| PM10 | 0-1000 μg/m³ | ±25 μg/m³ (0-100), ±25% (100-1000) |
+| 粒径检测 | 0.3-10 μm | - |
+| 采样间隔 | 1秒 | - |
+| 寿命 | > 8年 (连续运行) | - |
+
+**PM2.5等级参考** (中国AQI标准):
+| 等级 | PM2.5浓度 | 空气质量 |
+|------|-----------|----------|
+| 优 | 0-35 μg/m³ | 空气质量令人满意 |
+| 良 | 35-75 μg/m³ | 可接受，敏感人群注意 |
+| 轻度污染 | 75-115 μg/m³ | 敏感人群有症状 |
+| 中度污染 | 115-150 μg/m³ | 进一步加剧症状 |
+| 重度污染 | 150-250 μg/m³ | 所有人健康影响 |
+| 严重污染 | >250 μg/m³ | 健康警报 |
+
+#### Prosense WZ-H3-N (HCHO甲醛传感器)
 - 通信协议: LP_UART硬件串口 (GPIO4/GPIO5固定)
 - 波特率: 9600 bps (8N1)
-- 工作模式: 问答模式 (可直接获取ug/m³和ppb双单位数据)
-- 测量范围: 0-1 ppm HCHO (最大过载5ppm)
-- 分辨率: 0.01 ppm
-- 响应时间: < 90秒 (T90)
-- 检测精度: ±30ppb 或 ±10%取大值 (25±3°C)
-- 特性: 抗酒精干扰、寿命长 (6年)、耐高温 (-40~70°C)
+- 测量技术: 电化学燃料电池
+- 工作模式: 问答模式 (同时输出ug/m³和ppb)
+
+| 参数 | 规格 |
+|------|------|
+| 测量范围 | 0-1 ppm (0-1250 μg/m³)，过载5ppm |
+| 分辨率 | 0.01 ppm (10 ppb) |
+| 精度 | ±30 ppb 或 ±10% 取大值 (25±3°C) |
+| 响应时间 | < 90秒 (T90) |
+| 工作温度 | -40 to 70°C |
+| 零点漂移 | < ±20 ppb/年 |
+| 寿命 | > 6年 |
+| 特性 | 抗酒精干扰、高选择性 |
+
+**精度说明**:
+- 低浓度时 (<300 ppb): 误差以±30 ppb为主
+- 高浓度时 (>300 ppb): 误差以±10%为主
+- 例如: 读数100 ppb时，实际范围70-130 ppb；读数500 ppb时，实际范围450-550 ppb
 
 **甲醛(HCHO)浓度标准与健康影响**:
 
@@ -189,19 +240,32 @@ AirSense/
 #### DPS310 (气压/温度传感器)
 - 通信协议: I2C/SPI
 - I2C地址: 0x77 (SDO=HIGH) / 0x76 (SDO=LOW)
-- 气压范围: 300-1200 hPa
-- 温度范围: -40 to 85°C
-- 精度: ±0.005 hPa (±0.05 m)
-- 采样速率: 可配置 1-128 次/秒
+- 测量技术: 电容式MEMS
+
+| 参数 | 范围 | 精度/误差 |
+|------|------|-----------|
+| 气压 | 300-1200 hPa | ±0.06 hPa (相对), ±1 hPa (绝对) |
+| 温度 | -40 to 85°C | ±0.5°C |
+| 海拔分辨率 | - | ±0.05 m (相对高度变化) |
+| 采样速率 | 1-128 次/秒 | - |
+| 噪声 | - | 0.002 hPa (最低噪声模式) |
+
+**应用说明**: 本项目用于SCD41气压补偿和相对高度变化检测
 
 #### SHT85 (温湿度传感器)
 - 通信协议: I2C
 - I2C地址: 0x44
-- 温度范围: -40 to 125°C
-- 温度精度: ±0.1°C (典型值)
-- 湿度范围: 0-100% RH
-- 湿度精度: ±1.5% RH (典型值)
-- 响应时间: 8秒 (τ63%)
+- 测量技术: CMOSens (电容式)
+
+| 参数 | 范围 | 精度/误差 |
+|------|------|-----------|
+| 温度 | -40 to 125°C | ±0.1°C (典型), ±0.2°C (最大, 20-60°C) |
+| 湿度 | 0-100% RH | ±1.5% RH (典型), ±2% RH (最大, 10-90%) |
+| 响应时间 | - | 8秒 (τ63%) |
+| 重复性 | - | 温度 0.04°C, 湿度 0.08% RH |
+| 漂移 | - | 温度 <0.03°C/年, 湿度 <0.25% RH/年 |
+
+**精度等级**: 工业级高精度传感器，用于SCD41温度补偿和SGP41湿度补偿基准
 
 ## 编译和烧录
 
@@ -290,21 +354,25 @@ help
 输出示例：
 ```
 === AirSense Available Commands ===
-  set_alt_ref <altitude>   - Set altitude reference in meters (for DPS310)
-                             Example: set_alt_ref 100
-  set_voc_baseline <value> - Set VOC baseline raw value (for SGP41)
-                             Example: set_voc_baseline 30000
-                             Valid range: 10000-60000, default: 27000
-  set_nox_baseline <value> - Set NOx baseline raw value (for SGP41)
-                             Example: set_nox_baseline 16000
-                             Valid range: 5000-40000, default: 15000
-  get_baseline             - Show current VOC/NOx baseline values
-  calibrate_co2 <ppm>      - Forced CO2 calibration (for SCD41)
-                             Example: calibrate_co2 400 (outdoor air)
-                             Valid range: 400-2000 ppm
+
+--- SCD41 CO2 Sensor ---
+  calibrate_co2 <ppm>      - Forced CO2 calibration (400-2000)
+  factory_reset            - Restore SCD41 to factory defaults
+  set_temp_offset <celsius>- Manual temp offset (auto at startup)
+  Note: Pressure & temperature compensation are automatic
+
+--- SGP41 VOC/NOx Sensor ---
+  set_voc_baseline <value> - Set VOC baseline (10000-60000)
+  set_nox_baseline <value> - Set NOx baseline (5000-40000)
+  get_baseline             - Show current baseline values
+
+--- DPS310 Pressure Sensor ---
+  set_alt_ref <altitude>   - Set altitude reference (meters)
+
+--- General ---
   help                     - Show this help message
 
-Note: All sensor data is automatically displayed every 3 seconds
+Note: SCD41 auto-compensated by DPS310 pressure
 ```
 
 #### `set_alt_ref <altitude>`
@@ -498,6 +566,34 @@ Restarting measurement...
 - 校准后，SCD41读数应更接近S88LP（NDIR技术，更准确）
 - 如果校准后两者仍有差异，以S88LP为准
 
+#### `factory_reset`
+恢复 SCD41 传感器到出厂默认设置
+
+```bash
+factory_reset
+```
+
+**使用场景**:
+- 校准失败后需要恢复传感器状态
+- 传感器读数异常（如显示0 ppm）
+- 需要清除所有自定义校准数据
+
+**输出示例**:
+```
+Performing SCD41 factory reset...
+Factory reset successful!
+Restarting measurement...
+```
+
+**说明**:
+- 此命令会清除所有用户校准数据，恢复出厂默认值
+- 执行后需要等待约1.2秒让传感器重新初始化
+- 恢复后，温度偏移和海拔补偿需要重新设置（系统会在下次重启时自动设置）
+
+**注意事项**:
+- ⚠️ 如果校准命令返回错误码 `0x8000`（-32768），说明校准失败，应执行此命令恢复
+- 恢复后建议等待传感器运行3分钟以上再进行新的校准
+
 ### 引脚配置修改
 
 如需修改引脚配置，请编辑 [main.c](main/main.c) 文件中的引脚定义：
@@ -534,23 +630,40 @@ Restarting measurement...
 
 所有传感器使用不同的I2C地址（0x62, 0x59, 0x69, 0x77, 0x44），不会产生地址冲突。
 
-### SCD41自动温度偏移补偿
+### SCD41自动补偿
 
-系统启动时会自动执行SCD41温度偏移校准:
+系统会自动对SCD41执行两种补偿：
+
+#### 1. 温度偏移补偿（启动时执行一次）
 
 **原理**:
 - SCD41内部有自热效应,传感器温度比环境温度高约1.5-4°C
-- 自热会影响CO2读数准确性(温度升高导致气压测量偏差)
+- 自热会影响CO2读数准确性
 - 使用外部高精度温度传感器(SHT85)测量真实环境温度
 - 自动计算偏移量并设置到SCD41
 
 **校准过程**:
-1. 系统启动后等待10秒,让传感器稳定(确保SCD41完成至少一个5秒测量周期)
-2. 尝试最多5次读取SHT85和SCD41的温度(每次间隔1秒)
+1. 系统启动后等待10秒,让传感器稳定
+2. 读取SHT85和SCD41的温度
 3. 计算温度偏移 = SCD41温度 - SHT85温度
 4. 如果偏移在0.5~5°C范围内,自动设置到SCD41
-5. 同时设置海拔补偿为5m(南京浦口区海拔)
-6. 重启SCD41测量,使用补偿后的参数
+
+#### 2. 气压动态补偿（每次测量时执行）
+
+**原理**:
+- SCD41的CO2测量基于光声技术，气压变化会影响测量结果
+- 传统方法是设置静态海拔高度，由传感器内部估算气压
+- 本项目使用DPS310实时气压进行动态补偿，更加精确
+
+**工作方式**:
+- 每次传感器采样周期（3秒），读取DPS310的实时气压
+- 将气压值（hPa）直接发送给SCD41进行补偿
+- 气压范围：700-1200 hPa
+
+**优势**:
+- 比静态海拔补偿更精确（海拔补偿只是用来估算气压）
+- 能够响应天气变化导致的气压波动
+- 无需用户手动设置海拔
 
 **日志输出示例**:
 ```
@@ -559,16 +672,16 @@ I (12346) AirSense: Waiting for sensors to stabilize (10 seconds)...
 I (22456) AirSense: Temperature offset detected: 2.56°C (SCD41=24.04°C, SHT85=21.48°C)
 I (22567) AirSense: Normal self-heating detected, applying temperature offset compensation
 I (22678) AirSense: SCD41 temperature offset set to 2.56°C
-I (22789) AirSense: SCD41 sensor altitude set to 5m
 I (23123) AirSense: SCD41 periodic measurement restarted with calibration
 ```
 
 **注意事项**:
-- 自动校准仅在同时启用SCD41和SHT85时生效
+- 温度补偿仅在同时启用SCD41和SHT85时生效
+- 气压补偿仅在同时启用SCD41和DPS310时生效
 - 温度偏移必须在0.5~5°C范围内才会设置(避免异常值)
 - 校准失败时会使用默认设置继续运行
 - 温度补偿不会持久化存储,每次重启都会重新校准
-- 首次启动需要约12-15秒完成温度校准(10秒预热 + 最多5秒重试)
+- 气压补偿是实时动态的，无需持久化
 
 ### 传感器预热时间
 
@@ -584,7 +697,7 @@ I (23123) AirSense: SCD41 periodic measurement restarted with calibration
 
 ### 校准说明
 
-- **SCD41 (CO2传感器)**: 支持FRC（强制校准）和ASC（自动自校准），ASC需在新鲜空气中定期运行
+- **SCD41 (CO2传感器)**: 支持FRC（强制校准）和ASC（自动自校准），气压由DPS310自动补偿
 - **SGP41 (VOC/NOx传感器)**:
   - 使用固定阈值映射算法，无需校准
   - 自动执行 conditioning 步骤（初始化时）

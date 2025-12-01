@@ -51,6 +51,11 @@ static uint8_t calculate_checksum(const uint8_t *data, uint8_t len) {
  * [8] 校验值
  */
 static esp_err_t parse_qa_frame(const uint8_t *frame, prosense_wzh3n_data_t *data) {
+    // 打印原始帧数据
+    ESP_LOGI(TAG, "Raw frame: %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+             frame[0], frame[1], frame[2], frame[3], frame[4],
+             frame[5], frame[6], frame[7], frame[8]);
+
     // 验证命令字节
     if (frame[1] != 0x86) {
         ESP_LOGE(TAG, "Invalid command byte: 0x%02X (expected 0x86)", frame[1]);
