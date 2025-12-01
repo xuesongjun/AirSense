@@ -38,6 +38,7 @@ extern "C" {
 #define DPS310_REG_RESET        0x0C  // 复位
 #define DPS310_REG_PRODUCT_ID   0x0D  // 产品ID
 #define DPS310_REG_COEF_BASE    0x10  // 校准系数起始地址
+#define DPS310_REG_COEF_SRCE    0x28  // 温度系数源寄存器
 
 // 产品ID
 #define DPS310_PRODUCT_ID       0x10
