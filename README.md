@@ -370,6 +370,10 @@ help
 --- DPS310 Pressure Sensor ---
   set_alt_ref <altitude>   - Set altitude reference (meters)
 
+--- Wi-Fi ---
+  set_wifi <ssid> <password> - Update Wi-Fi credentials and reconnect
+  get_ip                     - Show current STA IP (if connected)
+
 --- General ---
   help                     - Show this help message
 
