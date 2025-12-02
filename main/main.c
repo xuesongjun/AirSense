@@ -30,6 +30,11 @@
 #include "esp_event.h"
 #include "esp_http_server.h"
 
+#ifndef CONFIG_I2C_SUPPRESS_DEPRECATE_WARN
+#define CONFIG_I2C_SUPPRESS_DEPRECATE_WARN 1
+#endif
+#include "driver/i2c.h"
+
 // 传感器驱动头文件
 #include "sensors/senseair_s88lp.h" // S88LP CO2传感器 (UART Modbus)
 #include "sensors/scd41.h"          // SCD41 CO2传感器
@@ -191,7 +196,14 @@ static void wifi_prepare_config(wifi_config_t *config) {
     config->sta.ssid[sizeof(config->sta.ssid) - 1] = 0;
     strncpy((char *)config->sta.password, g_wifi_pass, sizeof(config->sta.password) - 1);
     config->sta.password[sizeof(config->sta.password) - 1] = 0;
-    config->sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    config->sta.threshold.authmode = (g_wifi_pass[0] == '\0') ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+}
+
+static void wifi_reset_retry_counter(void) {
+    s_retry_num = 0;
+    if (s_wifi_event_group) {
+        xEventGroupClearBits(s_wifi_event_group, WIFI_FAIL_BIT | WIFI_CONNECTED_BIT);
+    }
 }
 
 static esp_err_t wifi_reconnect(void) {
@@ -204,6 +216,7 @@ static esp_err_t wifi_reconnect(void) {
     if (err != ESP_OK) {
         return err;
     }
+    wifi_reset_retry_counter();
     err = esp_wifi_disconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
         ESP_LOGW(TAG, "Wi-Fi disconnect returned %s", esp_err_to_name(err));
@@ -746,11 +759,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
             ESP_LOGI(TAG, "Retrying to connect to AP...");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            ESP_LOGE(TAG, "Failed to connect after %d retries. Use 'set_wifi <ssid> [password]' to update credentials.", WIFI_MAXIMUM_RETRY);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
+        wifi_reset_retry_counter();
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -776,14 +790,7 @@ static void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
     s_wifi_started = true;
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "Connected to SSID:%s", g_wifi_ssid);
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGE(TAG, "Failed to connect to SSID:%s", g_wifi_ssid);
-    } else {
-        ESP_LOGE(TAG, "Unexpected Wi-Fi event");
-    }
+    ESP_LOGI(TAG, "Wi-Fi STA start requested (SSID:%s). Awaiting connection status...", g_wifi_ssid);
 }
 
 /**
@@ -976,40 +983,39 @@ static void console_task(void *pvParameters) {
                         args++;
                     }
                     char *space = strchr(args, ' ');
-                    if (space == NULL) {
-                        printf("Usage: set_wifi <ssid> <password>\n");
-                    } else {
+                    char *ssid = args;
+                    char *pass = "";
+                    if (space) {
                         *space = '\0';
-                        char *ssid = args;
-                        char *pass = space + 1;
+                        pass = space + 1;
                         while (*pass == ' ') {
                             pass++;
                         }
-                        size_t ssid_len = strlen(ssid);
-                        size_t pass_len = strlen(pass);
-                        if (ssid_len == 0 || pass_len == 0) {
-                            printf("Usage: set_wifi <ssid> <password>\n");
-                        } else if (ssid_len > WIFI_SSID_MAX_LEN || pass_len > WIFI_PASS_MAX_LEN) {
-                            printf("SSID or password too long (SSID<=%d, PASS<=%d)\n", WIFI_SSID_MAX_LEN, WIFI_PASS_MAX_LEN);
-                        } else {
-                            strncpy(g_wifi_ssid, ssid, sizeof(g_wifi_ssid) - 1);
-                            g_wifi_ssid[sizeof(g_wifi_ssid) - 1] = '\0';
-                            strncpy(g_wifi_pass, pass, sizeof(g_wifi_pass) - 1);
-                            g_wifi_pass[sizeof(g_wifi_pass) - 1] = '\0';
-                            esp_err_t save_ret = wifi_credentials_save_to_nvs(g_wifi_ssid, g_wifi_pass);
-                            if (save_ret == ESP_OK) {
-                                printf("Wi-Fi credentials saved to NVS.\n");
-                                esp_err_t apply_ret = wifi_reconnect();
-                                if (apply_ret == ESP_OK) {
-                                    printf("Wi-Fi reconnect initiated with new credentials.\n");
-                                } else if (apply_ret == ESP_ERR_INVALID_STATE) {
-                                    printf("Wi-Fi not started yet. Credentials will be used after reboot.\n");
-                                } else {
-                                    printf("Failed to apply Wi-Fi credentials: %s\n", esp_err_to_name(apply_ret));
-                                }
+                    }
+                    size_t ssid_len = strlen(ssid);
+                    size_t pass_len = strlen(pass);
+                    if (ssid_len == 0) {
+                        printf("Usage: set_wifi <ssid> [password]\n");
+                    } else if (ssid_len > WIFI_SSID_MAX_LEN || pass_len > WIFI_PASS_MAX_LEN) {
+                        printf("SSID or password too long (SSID<=%d, PASS<=%d)\n", WIFI_SSID_MAX_LEN, WIFI_PASS_MAX_LEN);
+                    } else {
+                        strncpy(g_wifi_ssid, ssid, sizeof(g_wifi_ssid) - 1);
+                        g_wifi_ssid[sizeof(g_wifi_ssid) - 1] = '\0';
+                        strncpy(g_wifi_pass, pass, sizeof(g_wifi_pass) - 1);
+                        g_wifi_pass[sizeof(g_wifi_pass) - 1] = '\0';
+                        esp_err_t save_ret = wifi_credentials_save_to_nvs(g_wifi_ssid, g_wifi_pass);
+                        if (save_ret == ESP_OK) {
+                            printf("Wi-Fi credentials saved to NVS (%s network).\n", pass_len == 0 ? "open" : "secured");
+                            esp_err_t apply_ret = wifi_reconnect();
+                            if (apply_ret == ESP_OK) {
+                                printf("Wi-Fi reconnect initiated with new credentials.\n");
+                            } else if (apply_ret == ESP_ERR_INVALID_STATE) {
+                                printf("Wi-Fi not started yet. Credentials will be used after reboot.\n");
                             } else {
-                                printf("Failed to save Wi-Fi credentials: %s\n", esp_err_to_name(save_ret));
+                                printf("Failed to apply Wi-Fi credentials: %s\n", esp_err_to_name(apply_ret));
                             }
+                        } else {
+                            printf("Failed to save Wi-Fi credentials: %s\n", esp_err_to_name(save_ret));
                         }
                     }
 
@@ -1047,7 +1053,7 @@ static void console_task(void *pvParameters) {
                     printf("\n--- DPS310 Pressure Sensor ---\n");
                     printf("  set_alt_ref <altitude>   - Set altitude reference (meters)\n");
                     printf("\n--- Wi-Fi ---\n");
-                    printf("  set_wifi <ssid> <password> - Update Wi-Fi credentials and reconnect\n");
+                    printf("  set_wifi <ssid> [password] - Update Wi-Fi credentials (password optional for open AP)\n");
                     printf("  get_ip                   - Show current STA IP (if connected)\n");
                     printf("\n--- General ---\n");
                     printf("  help                     - Show this help message\n");

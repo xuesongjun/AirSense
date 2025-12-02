@@ -3,6 +3,10 @@
  * @brief Infineon DPS310 气压传感器驱动实现 (使用旧版 I2C API)
  */
 
+#ifndef CONFIG_I2C_SUPPRESS_DEPRECATE_WARN
+#define CONFIG_I2C_SUPPRESS_DEPRECATE_WARN 1
+#endif
+#include "driver/i2c.h"
 #include "dps310_legacy.h"
 #include <string.h>
 #include <math.h>

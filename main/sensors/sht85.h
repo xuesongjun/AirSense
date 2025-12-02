@@ -13,7 +13,15 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#if defined(__has_include)
+#if __has_include("hal/i2c_types.h")
+#include "hal/i2c_types.h"
+#else
 #include "driver/i2c.h"
+#endif
+#else
+#include "driver/i2c.h"
+#endif
 #include "esp_err.h"
 
 #ifdef __cplusplus

@@ -3,6 +3,10 @@
  * @brief Sensirion SCD41 CO2传感器驱动实现
  */
 
+#ifndef CONFIG_I2C_SUPPRESS_DEPRECATE_WARN
+#define CONFIG_I2C_SUPPRESS_DEPRECATE_WARN 1
+#endif
+#include "driver/i2c.h"
 #include "scd41.h"
 #include <string.h>
 #include "esp_log.h"

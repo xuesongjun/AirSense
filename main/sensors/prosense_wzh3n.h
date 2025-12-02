@@ -14,7 +14,17 @@
 #define PROSENSE_WZH3N_H
 
 #include <stdint.h>
+#if defined(__has_include)
+#if __has_include("hal/gpio_types.h")
+#include "hal/gpio_types.h"
+#elif __has_include("driver/gpio_types.h")
+#include "driver/gpio_types.h"
+#else
 #include "driver/gpio.h"
+#endif
+#else
+#include "driver/gpio.h"
+#endif
 #include "esp_err.h"
 
 #ifdef __cplusplus

@@ -8,7 +8,12 @@
 #ifndef HARDWARE_CONFIG_H
 #define HARDWARE_CONFIG_H
 
+#include <esp_idf_version.h>
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+#include "driver/gpio_types.h"
+#else
 #include "driver/gpio.h"
+#endif
 
 // ============================================================================
 // ESP32-C5 引脚配置
