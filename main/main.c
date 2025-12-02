@@ -129,7 +129,9 @@ typedef struct {
     float sgp41_voc_index;
     float sgp41_nox_index;
     bool prosense_valid;
-    uint16_t prosense_hcho;
+    uint16_t prosense_hcho;     // ug/m3
+    uint16_t prosense_ppb;
+    float prosense_mgm3;
     float prosense_ppm;
     bool dps310_valid;
     float dps310_temp;
@@ -627,6 +629,8 @@ static void sensor_task(void *pvParameters) {
                    prosense_data.hcho_ppb, prosense_data.hcho_ppm);
             current_snapshot.prosense_valid = true;
             current_snapshot.prosense_hcho = prosense_data.hcho_ugm3;
+            current_snapshot.prosense_ppb = prosense_data.hcho_ppb;
+            current_snapshot.prosense_mgm3 = prosense_data.hcho_mgm3;
             current_snapshot.prosense_ppm = prosense_data.hcho_ppm;
         } else {
             printf("[WZ-H3-N] Failed to read HCHO\n");
@@ -697,7 +701,7 @@ static esp_err_t api_handler(httpd_req_t *req) {
     sensor_snapshot_t snapshot = sensor_snapshot_copy_safe();
     char resp[1024];
     int len = snprintf(resp, sizeof(resp),
-                       "{\"timestamp\":%lld,\"sht85\":{\"valid\":%s,\"temp\":%.2f,\"rh\":%.2f},\"scd41\":{\"valid\":%s,\"co2\":%u,\"temp\":%.2f,\"rh\":%.2f},\"s88lp\":{\"valid\":%s,\"co2\":%u},\"sgp41\":{\"valid\":%s,\"voc_raw\":%u,\"nox_raw\":%u,\"voc_index\":%.1f,\"nox_index\":%.1f},\"prosense\":{\"valid\":%s,\"hcho_ugm3\":%u,\"hcho_ppm\":%.3f},\"dps310\":{\"valid\":%s,\"temp\":%.2f,\"pressure_hpa\":%.2f,\"alt\":%.2f,\"delta_h\":%.2f}}",
+                       "{\"timestamp\":%lld,\"sht85\":{\"valid\":%s,\"temp\":%.2f,\"rh\":%.2f},\"scd41\":{\"valid\":%s,\"co2\":%u,\"temp\":%.2f,\"rh\":%.2f},\"s88lp\":{\"valid\":%s,\"co2\":%u},\"sgp41\":{\"valid\":%s,\"voc_raw\":%u,\"nox_raw\":%u,\"voc_index\":%.1f,\"nox_index\":%.1f},\"prosense\":{\"valid\":%s,\"hcho_ugm3\":%u,\"hcho_mgm3\":%.3f,\"hcho_ppb\":%u,\"hcho_ppm\":%.3f},\"dps310\":{\"valid\":%s,\"temp\":%.2f,\"pressure_hpa\":%.2f,\"alt\":%.2f,\"delta_h\":%.2f}}",
                        snapshot.timestamp_ms,
                        snapshot.sht85_valid ? "true" : "false",
                        snapshot.sht85_temp,
@@ -715,6 +719,8 @@ static esp_err_t api_handler(httpd_req_t *req) {
                        snapshot.sgp41_nox_index,
                        snapshot.prosense_valid ? "true" : "false",
                        snapshot.prosense_hcho,
+                       snapshot.prosense_mgm3,
+                       snapshot.prosense_ppb,
                        snapshot.prosense_ppm,
                        snapshot.dps310_valid ? "true" : "false",
                        snapshot.dps310_temp,
@@ -725,7 +731,7 @@ static esp_err_t api_handler(httpd_req_t *req) {
     return httpd_resp_send(req, resp, len);
 }
 
-static const char *HTML_PAGE = "<!DOCTYPE html>\n<html><head><meta charset='utf-8'>\n<title>AirSense Dashboard</title>\n<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f6fb;margin:0;padding:20px;color:#333;}h1{margin-top:0;}#cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;} .card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 4px 12px rgba(0,0,0,0.08);} .value{font-size:1.2em;font-weight:bold;color:#1f6feb;}table{width:100%;border-collapse:collapse;}td{padding:4px 0;}div.card table{width:100%;}</style>\n</head><body>\n<h1>AirSense 实时数据</h1>\n<div id='cards'>Loading...</div>\n<script>const el=document.getElementById('cards');function row(label,value){return `<tr><td>${label}</td><td class='value'>${value}</td></tr>`;}function card(title,rows){return `<div class='card'><h3>${title}</h3><table>${rows}</table></div>`;}function fmt(v,u='',d=1){return Number.isFinite(v)?v.toFixed(d)+u:'--';}async function refresh(){try{const res=await fetch('/api/sensors');const d=await res.json();const cards=[card('温湿度',row('SHT85 温度',d.sht85.valid?fmt(d.sht85.temp,'°C',2):'--')+row('SHT85 湿度',d.sht85.valid?fmt(d.sht85.rh,'%',1):'--')+row('SCD41 温度',d.scd41.valid?fmt(d.scd41.temp,'°C',2):'--')+row('SCD41 湿度',d.scd41.valid?fmt(d.scd41.rh,'%',1):'--')),card('CO₂',row('SCD41',d.scd41.valid?d.scd41.co2+' ppm':'--')+row('S88LP',d.s88lp.valid?d.s88lp.co2+' ppm':'--')),card('VOC / NOx',row('VOC Raw',d.sgp41.valid?d.sgp41.voc_raw:'--')+row('VOC Index',d.sgp41.valid?fmt(d.sgp41.voc_index,'',0):'--')+row('NOx Raw',d.sgp41.valid?d.sgp41.nox_raw:'--')+row('NOx Index',d.sgp41.valid?fmt(d.sgp41.nox_index,'',0):'--')),card('甲醛 / 气压',row('甲醛',d.prosense.valid?d.prosense.hcho_ugm3+' μg/m³':'--')+row('DPS310 温度',d.dps310.valid?fmt(d.dps310.temp,'°C',2):'--')+row('DPS310 气压',d.dps310.valid?fmt(d.dps310.pressure_hpa,' hPa',2):'--')+row('DPS310 海拔',d.dps310.valid?fmt(d.dps310.alt,' m',2):'--'))];el.innerHTML=cards.join('');}catch(e){el.innerHTML=\"<div class='card'>无法获取数据</div>\";}}refresh();setInterval(refresh,3000);</script>\n</body></html>\n";
+static const char *HTML_PAGE = "<!DOCTYPE html>\n<html><head><meta charset='utf-8'>\n<title>AirSense Dashboard</title>\n<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f6fb;margin:0;padding:20px;color:#333;}h1{margin-top:0;}#cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;} .card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 4px 12px rgba(0,0,0,0.08);} .value{font-size:1.2em;font-weight:bold;color:#1f6feb;}table{width:100%;border-collapse:collapse;}td{padding:4px 0;}div.card table{width:100%;}</style>\n</head><body>\n<h1>AirSense 实时数据</h1>\n<div id='cards'>Loading...</div>\n<script>const el=document.getElementById('cards');function row(label,value){return `<tr><td>${label}</td><td class='value'>${value}</td></tr>`;}function card(title,rows){return `<div class='card'><h3>${title}</h3><table>${rows}</table></div>`;}function fmt(v,u='',d=1){return Number.isFinite(v)?v.toFixed(d)+u:'--';}async function refresh(){try{const res=await fetch('/api/sensors');const d=await res.json();const cards=[card('温湿度',row('SHT85 温度',d.sht85.valid?fmt(d.sht85.temp,'°C',2):'--')+row('SHT85 湿度',d.sht85.valid?fmt(d.sht85.rh,'%',1):'--')+row('SCD41 温度',d.scd41.valid?fmt(d.scd41.temp,'°C',2):'--')+row('SCD41 湿度',d.scd41.valid?fmt(d.scd41.rh,'%',1):'--')),card('CO₂',row('SCD41',d.scd41.valid?d.scd41.co2+' ppm':'--')+row('S88LP',d.s88lp.valid?d.s88lp.co2+' ppm':'--')),card('VOC / NOx',row('VOC Raw',d.sgp41.valid?d.sgp41.voc_raw:'--')+row('VOC Index',d.sgp41.valid?fmt(d.sgp41.voc_index,'',0):'--')+row('NOx Raw',d.sgp41.valid?d.sgp41.nox_raw:'--')+row('NOx Index',d.sgp41.valid?fmt(d.sgp41.nox_index,'',0):'--')),card('甲醛 / 气压',row('甲醛 (mg/m³)',d.prosense.valid?fmt(d.prosense.hcho_mgm3,' mg/m³',3):'--')+row('甲醛 (ppb)',d.prosense.valid?d.prosense.hcho_ppb+' ppb':'--')+row('DPS310 温度',d.dps310.valid?fmt(d.dps310.temp,'°C',2):'--')+row('DPS310 气压',d.dps310.valid?fmt(d.dps310.pressure_hpa,' hPa',2):'--')+row('DPS310 海拔',d.dps310.valid?fmt(d.dps310.alt,' m',2):'--'))];el.innerHTML=cards.join('');}catch(e){el.innerHTML=\"<div class='card'>无法获取数据</div>\";}}refresh();setInterval(refresh,3000);</script>\n</body></html>\n";
 
 
 static esp_err_t root_handler(httpd_req_t *req) {
